@@ -1,0 +1,42 @@
+[
+  {
+    "id": "e-ginpara-hca",
+    "name": "e ギンギラパラダイス 夢幻カーニバルHCA",
+    "category": "パチンコ",
+    "border": 18.5,
+    "valuePerRotation": 2.8,
+    "notes": "等価交換想定"
+  },
+  {
+    "id": "pa-evangelion-16",
+    "name": "P新世紀エヴァンゲリオン16",
+    "category": "パチンコ",
+    "border": 19.2,
+    "valuePerRotation": 2.6,
+    "notes": "等価交換想定"
+  },
+  {
+    "id": "p-hokuto-muso",
+    "name": "P真・北斗無双 第4章",
+    "category": "パチンコ",
+    "border": 20.1,
+    "valuePerRotation": 2.5,
+    "notes": "等価交換想定"
+  },
+  {
+    "id": "e-conan-mei",
+    "name": "e名探偵コナン 甘",
+    "category": "パチンコ",
+    "border": 21.5,
+    "valuePerRotation": 2.3,
+    "notes": "甘デジ"
+  },
+  {
+    "id": "p-umi-kyojin",
+    "name": "Pスーパー海物語 IN 沖縄5",
+    "category": "パチンコ",
+    "border": 17.8,
+    "valuePerRotation": 3.0,
+    "notes": "等価交換想定"
+  }
+]
