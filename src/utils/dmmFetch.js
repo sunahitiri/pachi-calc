@@ -1,15 +1,42 @@
 // DMM P-townから機種スペックを自動取得
-// CORSを回避するため公開プロキシを利用
+// CORSを回避するため複数の公開プロキシを順番に試す
 
+// プロキシ定義: { name, build(url) -> proxyUrl, extract(response) -> Promise<htmlString> }
 const PROXIES = [
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  {
+    name: 'allorigins',
+    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'allorigins-get',
+    build: (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    extract: async (res) => {
+      const json = await res.json();
+      return json?.contents || '';
+    },
+  },
+  {
+    name: 'codetabs',
+    build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'corsproxy.io',
+    build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'thingproxy',
+    build: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+    extract: (res) => res.text(),
+  },
 ];
 
 const URL_PATTERN = /^https?:\/\/p-town\.dmm\.com\/machines\/\d+/;
 
 // HTMLをパースして機種スペックを抽出
-function parseSpec(html, sourceUrl) {
+export function parseSpec(html, sourceUrl = '') {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const bodyText = (doc.body?.textContent || '').replace(/\s+/g, ' ').trim();
 
@@ -21,7 +48,7 @@ function parseSpec(html, sourceUrl) {
     '名称不明';
 
   // 大当たり確率: "大当り確率 1/349.9" 形式
-  const probMatch = bodyText.match(/大当り確率\s*1\/(\d+(?:\.\d+)?)/);
+  const probMatch = bodyText.match(/大当[たり]?り?確率\s*1\/(\d+(?:\.\d+)?)/);
   const probability = probMatch ? parseFloat(probMatch[1]) : null;
 
   // 初当り期待出玉: "初当り1回あたりの期待出玉 ... 5,282玉"
@@ -54,24 +81,31 @@ function parseSpec(html, sourceUrl) {
   };
 }
 
-// 公開プロキシを順番に試す
+// 複数プロキシを順番に試す。全プロキシの失敗理由をまとめてエラーに含める。
 async function fetchHtml(url) {
-  let lastError;
+  const failures = [];
   for (const proxy of PROXIES) {
     try {
-      const proxyUrl = proxy(url);
+      const proxyUrl = proxy.build(url);
       const res = await fetch(proxyUrl, {
-        headers: { Accept: 'text/html,application/xhtml+xml' },
+        headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const html = await res.text();
+      if (!res.ok) {
+        failures.push(`${proxy.name}: HTTP ${res.status}`);
+        continue;
+      }
+      const html = await proxy.extract(res);
       if (html && html.length > 1000) return html;
-      throw new Error('レスポンスが空または短すぎます');
+      failures.push(`${proxy.name}: レスポンスが空または短すぎ (${html?.length ?? 0}文字)`);
     } catch (e) {
-      lastError = e;
+      failures.push(`${proxy.name}: ${e.message || e}`);
     }
   }
-  throw lastError || new Error('全てのプロキシで取得失敗しました');
+  const err = new Error(
+    `全てのプロキシで取得に失敗しました。\n${failures.join('\n')}\n\n💡 DMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
+  );
+  err.failures = failures;
+  throw err;
 }
 
 export async function fetchDmmMachine(url) {
@@ -86,4 +120,12 @@ export async function fetchDmmMachine(url) {
   }
   const html = await fetchHtml(trimmed);
   return parseSpec(html, trimmed);
+}
+
+// 手動貼り付け用: HTMLとURL(任意)からスペック抽出
+export function parseDmmHtml(html, sourceUrl = '') {
+  if (!html || typeof html !== 'string' || html.length < 500) {
+    throw new Error('HTMLが短すぎます。ページ全体のソースを貼り付けてください。');
+  }
+  return parseSpec(html, sourceUrl);
 }

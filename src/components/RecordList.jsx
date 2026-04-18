@@ -86,6 +86,19 @@ export default function RecordList({ records, machines, onDelete }) {
                   期待値: {ev >= 0 ? '+' : ''}¥{ev.toLocaleString()}
                 </div>
               </div>
+              {r.isSession && (
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded px-2 py-1">
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>🎮 セッション</span>
+                    <span>あたり {r.hits?.length ?? 0}回</span>
+                    <span>{r.startRotations?.toLocaleString()} → {r.endRotations?.toLocaleString()}回</span>
+                    <span>持玉 {r.startBalls?.toLocaleString()} → {r.endBalls?.toLocaleString()}個</span>
+                    {typeof r.totalInvestment === 'number' && r.totalInvestment !== r.investment && (
+                      <span>現金投資 ¥{r.totalInvestment.toLocaleString()}</span>
+                    )}
+                  </div>
+                </div>
+              )}
               {r.notes && (
                 <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">📝 {r.notes}</div>
               )}

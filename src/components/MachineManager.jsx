@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { calcBorder } from '../utils/calculations';
-import { fetchDmmMachine } from '../utils/dmmFetch';
+import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
 
 export default function MachineManager({ machines, setMachines }) {
   const [showForm, setShowForm] = useState(false);
@@ -18,12 +18,28 @@ export default function MachineManager({ machines, setMachines }) {
   const [dmmUrl, setDmmUrl] = useState('');
   const [dmmLoading, setDmmLoading] = useState(false);
   const [dmmError, setDmmError] = useState('');
+  const [showDmmPaste, setShowDmmPaste] = useState(false);
+  const [dmmHtml, setDmmHtml] = useState('');
 
   const resetForm = () => {
     setForm({ name: '', probability: '', averagePayout: '', exchangeRate: '4', notes: '' });
     setEditing(null);
     setShowForm(false);
     setDmmError('');
+    setDmmHtml('');
+    setShowDmmPaste(false);
+  };
+
+  const applySpecToForm = (spec) => {
+    setForm({
+      name: spec.name,
+      probability: spec.probability.toString(),
+      averagePayout: spec.averagePayout.toString(),
+      exchangeRate: spec.exchangeRate.toString(),
+      notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
+    });
+    setEditing(null);
+    setShowForm(true);
   };
 
   const handleSubmit = (e) => {
@@ -69,21 +85,27 @@ export default function MachineManager({ machines, setMachines }) {
     setDmmLoading(true);
     try {
       const spec = await fetchDmmMachine(dmmUrl);
-      setForm({
-        name: spec.name,
-        probability: spec.probability.toString(),
-        averagePayout: spec.averagePayout.toString(),
-        exchangeRate: spec.exchangeRate.toString(),
-        notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
-      });
-      setEditing(null);
-      setShowForm(true);
+      applySpecToForm(spec);
       setShowDmmInput(false);
       setDmmUrl('');
     } catch (e) {
       setDmmError(e.message || '取得に失敗しました');
     } finally {
       setDmmLoading(false);
+    }
+  };
+
+  const handleDmmPaste = () => {
+    setDmmError('');
+    try {
+      const spec = parseDmmHtml(dmmHtml, dmmUrl);
+      applySpecToForm(spec);
+      setShowDmmInput(false);
+      setShowDmmPaste(false);
+      setDmmUrl('');
+      setDmmHtml('');
+    } catch (e) {
+      setDmmError(e.message || '解析に失敗しました');
     }
   };
 
@@ -127,7 +149,7 @@ export default function MachineManager({ machines, setMachines }) {
             disabled={dmmLoading}
           />
           {dmmError && (
-            <div className="text-xs text-red-600 dark:text-red-400">⚠️ {dmmError}</div>
+            <div className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap">⚠️ {dmmError}</div>
           )}
           <div className="flex gap-2">
             <button
@@ -135,12 +157,21 @@ export default function MachineManager({ machines, setMachines }) {
               disabled={dmmLoading || !dmmUrl}
               className="flex-1 bg-purple-600 text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
             >
-              {dmmLoading ? '取得中...' : '取得して編集'}
+              {dmmLoading ? '取得中...' : '自動取得'}
+            </button>
+            <button
+              onClick={() => setShowDmmPaste((v) => !v)}
+              disabled={dmmLoading}
+              className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
+            >
+              {showDmmPaste ? '手動を閉じる' : '📋 手動貼り付け'}
             </button>
             <button
               onClick={() => {
                 setShowDmmInput(false);
+                setShowDmmPaste(false);
                 setDmmUrl('');
+                setDmmHtml('');
                 setDmmError('');
               }}
               disabled={dmmLoading}
@@ -149,6 +180,37 @@ export default function MachineManager({ machines, setMachines }) {
               キャンセル
             </button>
           </div>
+
+          {showDmmPaste && (
+            <div className="mt-2 space-y-2 border-t border-purple-300 dark:border-purple-700 pt-2">
+              <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                <div className="font-semibold mb-1">📖 403エラー回避の手順</div>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>ブラウザでDMMページを開く（上のURL）</li>
+                  <li>ページ上で右クリック →「ページのソースを表示」</li>
+                  <li>Ctrl+A で全選択 → Ctrl+C でコピー</li>
+                  <li>下の枠に貼り付け（Ctrl+V）→ 解析ボタン</li>
+                </ol>
+              </div>
+              <textarea
+                value={dmmHtml}
+                onChange={(e) => setDmmHtml(e.target.value)}
+                placeholder="<!doctype html>..... ページ全体のHTMLを貼り付けてください"
+                rows={5}
+                className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-xs font-mono"
+              />
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                貼り付け済み: {dmmHtml.length.toLocaleString()} 文字
+              </div>
+              <button
+                onClick={handleDmmPaste}
+                disabled={!dmmHtml || dmmHtml.length < 500}
+                className="w-full bg-indigo-600 text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
+              >
+                解析して編集
+              </button>
+            </div>
+          )}
         </div>
       )}
 
