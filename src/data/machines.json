@@ -1,42 +1,29 @@
 [
   {
+    "id": "e-rezero-2",
+    "name": "e Re:ゼロから始める異世界生活 season2",
+    "category": "パチンコ",
+    "probability": 349.9,
+    "averagePayout": 5282,
+    "exchangeRate": 4,
+    "notes": "ボーダー約16.6回/1K (4円等価) / DMM出典"
+  },
+  {
     "id": "e-ginpara-hca",
     "name": "e ギンギラパラダイス 夢幻カーニバルHCA",
     "category": "パチンコ",
-    "border": 18.5,
-    "valuePerRotation": 2.8,
-    "notes": "等価交換想定"
-  },
-  {
-    "id": "pa-evangelion-16",
-    "name": "P新世紀エヴァンゲリオン16",
-    "category": "パチンコ",
-    "border": 19.2,
-    "valuePerRotation": 2.6,
-    "notes": "等価交換想定"
-  },
-  {
-    "id": "p-hokuto-muso",
-    "name": "P真・北斗無双 第4章",
-    "category": "パチンコ",
-    "border": 20.1,
-    "valuePerRotation": 2.5,
-    "notes": "等価交換想定"
+    "probability": 319.69,
+    "averagePayout": 1500,
+    "exchangeRate": 4,
+    "notes": "※サンプル値・要確認"
   },
   {
     "id": "e-conan-mei",
     "name": "e名探偵コナン 甘",
     "category": "パチンコ",
-    "border": 21.5,
-    "valuePerRotation": 2.3,
-    "notes": "甘デジ"
-  },
-  {
-    "id": "p-umi-kyojin",
-    "name": "Pスーパー海物語 IN 沖縄5",
-    "category": "パチンコ",
-    "border": 17.8,
-    "valuePerRotation": 3.0,
-    "notes": "等価交換想定"
+    "probability": 99.9,
+    "averagePayout": 600,
+    "exchangeRate": 4,
+    "notes": "※サンプル値・要確認"
   }
 ]

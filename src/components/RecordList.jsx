@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { calcExpectedValue, summarize, rotationsPer1K } from '../utils/calculations';
+import { calcExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
 
 export default function RecordList({ records, machines, onDelete }) {
   const machineMap = useMemo(
@@ -54,7 +54,8 @@ export default function RecordList({ records, machines, onDelete }) {
                 machine,
               })
             : 0;
-          const perK = rotationsPer1K(r.rotations, r.investment).toFixed(1);
+          const perK = rotationsPer1K(r.rotations, r.investment);
+          const border = machine ? calcBorder(machine) : 0;
           return (
             <div
               key={r.id}
@@ -80,7 +81,7 @@ export default function RecordList({ records, machines, onDelete }) {
               <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 dark:text-slate-300 mt-2">
                 <div>投資: ¥{r.investment.toLocaleString()}</div>
                 <div>回転: {r.rotations.toLocaleString()}</div>
-                <div>1K: {perK}回</div>
+                <div>1K: {perK.toFixed(1)}回 (B:{border.toFixed(1)})</div>
                 <div className={`font-semibold ${ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   期待値: {ev >= 0 ? '+' : ''}¥{ev.toLocaleString()}
                 </div>

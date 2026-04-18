@@ -1,30 +1,41 @@
 import { useState } from 'react';
+import { calcBorder } from '../utils/calculations';
+import { fetchDmmMachine } from '../utils/dmmFetch';
 
 export default function MachineManager({ machines, setMachines }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
     name: '',
-    border: '',
-    valuePerRotation: '',
+    probability: '',
+    averagePayout: '',
+    exchangeRate: '4',
     notes: '',
   });
 
+  // DMM URL取得用
+  const [showDmmInput, setShowDmmInput] = useState(false);
+  const [dmmUrl, setDmmUrl] = useState('');
+  const [dmmLoading, setDmmLoading] = useState(false);
+  const [dmmError, setDmmError] = useState('');
+
   const resetForm = () => {
-    setForm({ name: '', border: '', valuePerRotation: '', notes: '' });
+    setForm({ name: '', probability: '', averagePayout: '', exchangeRate: '4', notes: '' });
     setEditing(null);
     setShowForm(false);
+    setDmmError('');
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.name || !form.border || !form.valuePerRotation) return;
+    if (!form.name || !form.probability || !form.averagePayout || !form.exchangeRate) return;
     const data = {
       id: editing?.id || `custom-${Date.now()}`,
       name: form.name,
       category: 'パチンコ',
-      border: Number(form.border),
-      valuePerRotation: Number(form.valuePerRotation),
+      probability: Number(form.probability),
+      averagePayout: Number(form.averagePayout),
+      exchangeRate: Number(form.exchangeRate),
       notes: form.notes,
     };
     if (editing) {
@@ -39,8 +50,9 @@ export default function MachineManager({ machines, setMachines }) {
     setEditing(m);
     setForm({
       name: m.name,
-      border: m.border.toString(),
-      valuePerRotation: m.valuePerRotation.toString(),
+      probability: m.probability?.toString() || '',
+      averagePayout: m.averagePayout?.toString() || '',
+      exchangeRate: m.exchangeRate?.toString() || '4',
       notes: m.notes || '',
     });
     setShowForm(true);
@@ -52,20 +64,93 @@ export default function MachineManager({ machines, setMachines }) {
     }
   };
 
+  const handleDmmFetch = async () => {
+    setDmmError('');
+    setDmmLoading(true);
+    try {
+      const spec = await fetchDmmMachine(dmmUrl);
+      setForm({
+        name: spec.name,
+        probability: spec.probability.toString(),
+        averagePayout: spec.averagePayout.toString(),
+        exchangeRate: spec.exchangeRate.toString(),
+        notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
+      });
+      setEditing(null);
+      setShowForm(true);
+      setShowDmmInput(false);
+      setDmmUrl('');
+    } catch (e) {
+      setDmmError(e.message || '取得に失敗しました');
+    } finally {
+      setDmmLoading(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-3">
       <div className="flex justify-between items-center">
         <h2 className="font-bold text-slate-900 dark:text-white">登録機種</h2>
-        <button
-          onClick={() => {
-            resetForm();
-            setShowForm(true);
-          }}
-          className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-blue-700"
-        >
-          + 追加
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              setShowDmmInput(true);
+              setDmmError('');
+            }}
+            className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-purple-700"
+          >
+            🔗 DMM
+          </button>
+          <button
+            onClick={() => {
+              resetForm();
+              setShowForm(true);
+            }}
+            className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-blue-700"
+          >
+            + 追加
+          </button>
+        </div>
       </div>
+
+      {showDmmInput && (
+        <div className="bg-purple-50 dark:bg-purple-900/30 p-3 rounded-lg space-y-2 border border-purple-200 dark:border-purple-800">
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
+            DMM P-townのURLから自動取得
+          </div>
+          <input
+            type="url"
+            placeholder="https://p-town.dmm.com/machines/4457"
+            value={dmmUrl}
+            onChange={(e) => setDmmUrl(e.target.value)}
+            className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+            disabled={dmmLoading}
+          />
+          {dmmError && (
+            <div className="text-xs text-red-600 dark:text-red-400">⚠️ {dmmError}</div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={handleDmmFetch}
+              disabled={dmmLoading || !dmmUrl}
+              className="flex-1 bg-purple-600 text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
+            >
+              {dmmLoading ? '取得中...' : '取得して編集'}
+            </button>
+            <button
+              onClick={() => {
+                setShowDmmInput(false);
+                setDmmUrl('');
+                setDmmError('');
+              }}
+              disabled={dmmLoading}
+              className="flex-1 bg-slate-300 dark:bg-slate-600 dark:text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg space-y-2 border border-slate-200 dark:border-slate-700">
@@ -77,25 +162,42 @@ export default function MachineManager({ machines, setMachines }) {
             className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
             required
           />
-          <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">初当たり確率の分母（例: 319.69）</label>
             <input
               type="number"
-              step="0.1"
-              placeholder="ボーダー（例: 18.5）"
-              value={form.border}
-              onChange={(e) => setForm({ ...form, border: e.target.value })}
+              step="0.01"
+              placeholder="319.69"
+              value={form.probability}
+              onChange={(e) => setForm({ ...form, probability: e.target.value })}
               className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
               required
             />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">平均出玉（連チャン込み・1当たり）</label>
             <input
               type="number"
-              step="0.1"
-              placeholder="1回転の価値（例: 2.8）"
-              value={form.valuePerRotation}
-              onChange={(e) => setForm({ ...form, valuePerRotation: e.target.value })}
+              placeholder="例: 1500"
+              value={form.averagePayout}
+              onChange={(e) => setForm({ ...form, averagePayout: e.target.value })}
               className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
               required
             />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">交換率（円/玉）</label>
+            <select
+              value={form.exchangeRate}
+              onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })}
+              className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+            >
+              <option value="4">4.00（等価）</option>
+              <option value="3.57">3.57（28個交換）</option>
+              <option value="3.33">3.33（30個交換）</option>
+              <option value="2.5">2.50（2.5円パチ）</option>
+              <option value="1">1.00（1円パチ）</option>
+            </select>
           </div>
           <input
             type="text"
@@ -123,43 +225,54 @@ export default function MachineManager({ machines, setMachines }) {
       )}
 
       <div className="space-y-2">
-        {machines.map((m) => (
-          <div
-            key={m.id}
-            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm"
-          >
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  ボーダー: {m.border} / 1回転: ¥{m.valuePerRotation}
+        {machines.map((m) => {
+          const border = calcBorder(m);
+          return (
+            <div
+              key={m.id}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円
+                  </div>
+                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                    ボーダー: {border.toFixed(2)} 回/1K
+                  </div>
+                  {m.notes && (
+                    <div className="text-xs text-slate-400 mt-0.5">{m.notes}</div>
+                  )}
                 </div>
-                {m.notes && (
-                  <div className="text-xs text-slate-400 mt-0.5">{m.notes}</div>
-                )}
-              </div>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => handleEdit(m)}
-                  className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
-                >
-                  編集
-                </button>
-                <button
-                  onClick={() => handleDelete(m.id)}
-                  className="text-red-500 text-xs px-2 py-1"
-                >
-                  削除
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => handleEdit(m)}
+                    className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => handleDelete(m.id)}
+                    className="text-red-500 text-xs px-2 py-1"
+                  >
+                    削除
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="mt-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-xs text-slate-700 dark:text-slate-300">
         <div className="font-semibold mb-1">💡 機種データの追加方法</div>
-        <div>DMM.com（P-town）のボーダー表を参考に手入力してください。</div>
+        <div>
+          <strong>🔗 DMM ボタン:</strong> DMM P-townの機種ページURL（例: https://p-town.dmm.com/machines/4457）から自動取得します。
+        </div>
+        <div className="mt-1">
+          <strong>+ 追加 ボタン:</strong> 手動で初当たり確率と平均出玉（連チャン込み）を入力します。ボーダーは自動計算されます。
+        </div>
       </div>
     </div>
   );

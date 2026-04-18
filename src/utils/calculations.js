@@ -1,26 +1,47 @@
 // パチンコ期待値計算ユーティリティ
+//
+// 計算モデル:
+//   1回転の期待出玉 = 初当たり確率 × 平均出玉(連チャン込み)
+//   1回転の期待収入(円) = 1回転の期待出玉 × 交換率
+//   1回転のコスト(円) = 1000 / 1Kあたり実回転数
+//   1回転の期待値(円) = 期待収入 - コスト
+//   総期待値 = 1回転の期待値 × 総回転数
 
-// 1000円あたりの回転数を計算
+// 1000円あたりの回転数
 export function rotationsPer1K(totalRotations, investment) {
   if (!investment || investment <= 0) return 0;
   return (totalRotations * 1000) / investment;
 }
 
-// 期待値を計算
-// 基本式: 期待値 = (実回転数/1K - ボーダー) × 投資額 / 1000 × 調整係数
-// ※ 実際の期待値は機種ごとのvaluePerRotationを使って概算
+// 1回転の期待値(円)
+export function expectedValuePerRotation(perK, machine) {
+  if (!machine || !perK) return 0;
+  // probability: 初当たり確率の分母 (例: 319 なら 1/319)
+  const hitRate = 1 / machine.probability;
+  const expectedBalls = hitRate * machine.averagePayout;
+  const income = expectedBalls * machine.exchangeRate;
+  const costPerRotation = 1000 / perK;
+  return income - costPerRotation;
+}
+
+// 参考: 機種のボーダー(1Kあたり回転数)を計算
+// ボーダー = 1回転コスト = 1回転期待収入 のときの1Kあたり回転数
+// 1000/perK = hitRate × averagePayout × exchangeRate
+// perK = 1000 / (hitRate × averagePayout × exchangeRate)
+export function calcBorder(machine) {
+  if (!machine) return 0;
+  const hitRate = 1 / machine.probability;
+  const income = hitRate * machine.averagePayout * machine.exchangeRate;
+  if (income <= 0) return 0;
+  return 1000 / income;
+}
+
+// 総期待値(円)
 export function calcExpectedValue({ totalRotations, investment, machine }) {
   if (!machine || !totalRotations || !investment) return 0;
   const perK = rotationsPer1K(totalRotations, investment);
-  const delta = perK - machine.border;
-  // 1K差分あたりの価値: 回転数差 × (投資額/1000) × 回転価値
-  return Math.round(delta * (investment / 1000) * machine.valuePerRotation);
-}
-
-// 時給期待値（プレイ時間から算出）
-export function calcHourlyExpectedValue(expectedValue, minutes) {
-  if (!minutes || minutes <= 0) return 0;
-  return Math.round((expectedValue * 60) / minutes);
+  const evPerRotation = expectedValuePerRotation(perK, machine);
+  return Math.round(evPerRotation * totalRotations);
 }
 
 // 合計投資・回転数・期待値を集計

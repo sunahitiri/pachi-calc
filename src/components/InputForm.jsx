@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { calcExpectedValue, rotationsPer1K } from '../utils/calculations';
+import { calcExpectedValue, rotationsPer1K, calcBorder } from '../utils/calculations';
 
 function todayStr() {
   const d = new Date();
@@ -16,6 +16,7 @@ export default function InputForm({ machines, onAdd }) {
   const [notes, setNotes] = useState('');
 
   const selectedMachine = machines.find((m) => m.id === machineId);
+  const border = selectedMachine ? calcBorder(selectedMachine) : 0;
 
   const { perK, expected } = useMemo(() => {
     const r = Number(rotations) || 0;
@@ -69,7 +70,7 @@ export default function InputForm({ machines, onAdd }) {
           <option value="">選択してください</option>
           {machines.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.name}（ボーダー{m.border}）
+              {m.name}（ボーダー{calcBorder(m).toFixed(1)}）
             </option>
           ))}
         </select>
@@ -113,7 +114,7 @@ export default function InputForm({ machines, onAdd }) {
         />
       </div>
 
-      {rotations && investment && (
+      {rotations && investment && selectedMachine && (
         <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 space-y-1">
           <div className="text-sm text-slate-600 dark:text-slate-300 flex justify-between">
             <span>1Kあたり回転数</span>
@@ -121,7 +122,13 @@ export default function InputForm({ machines, onAdd }) {
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-300 flex justify-between">
             <span>ボーダー</span>
-            <span className="font-semibold">{selectedMachine?.border ?? '-'} 回</span>
+            <span className="font-semibold">{border.toFixed(2)} 回</span>
+          </div>
+          <div className="text-sm text-slate-600 dark:text-slate-300 flex justify-between">
+            <span>差分</span>
+            <span className={`font-semibold ${(perK - border) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              {(perK - border) >= 0 ? '+' : ''}{(perK - border).toFixed(2)}
+            </span>
           </div>
           <div className="flex justify-between text-base pt-1 border-t border-blue-200 dark:border-blue-800">
             <span className="font-bold">期待値</span>
