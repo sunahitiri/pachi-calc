@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { calcBorder } from '../utils/calculations';
+import { calcBorder, expectedValuePerRotation } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
 const BALL_VALUE = 4; // 1玉 = 4円
@@ -11,16 +11,22 @@ function todayStr() {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// 実質投資額(円): 持ち玉が増えた分は投資から差し引く
-function effectiveInvestment(totalInvestment, startBalls, currentBalls) {
-  return totalInvestment - (currentBalls - startBalls) * BALL_VALUE;
+// あたりで獲得した持ち玉の合計(全セグメント)
+function sumHitBallsGained(hits) {
+  return (hits || []).reduce((s, h) => s + (h.ballsGained || 0), 0);
 }
 
-// 1Kあたり回転数(玉価値考慮)
-function calcPerK(currentRotations, startRotations, effInv) {
-  const dRot = currentRotations - startRotations;
-  if (effInv <= 0 || dRot <= 0) return 0;
-  return (dRot * 1000) / effInv;
+// 累計投資額(円): 現金投資から、あたり以外で得た持ち玉分(=通常プレイ中の玉貸出等)を差し引く。
+// あたり中に増えた球は差し引かない(= 投資が減らない)
+function cumulativeInvestment(totalInvestment, startBalls, currentBalls, hitBallsGained) {
+  const nonHitBallsDelta = (currentBalls - startBalls) - hitBallsGained;
+  return totalInvestment - nonHitBallsDelta * BALL_VALUE;
+}
+
+// 1Kあたり回転数 — dRot は累計回転数(全セグメント合算)、cumInv は累計投資
+function calcPerK(dRot, cumInv) {
+  if (cumInv <= 0 || dRot <= 0) return 0;
+  return (dRot * 1000) / cumInv;
 }
 
 // 空文字なら fallback、それ以外は数値に変換 (0 を正しく扱うため `||` は使わない)
@@ -28,6 +34,20 @@ function numOr(input, fallback) {
   if (input === '' || input === null || input === undefined) return fallback;
   const n = Number(input);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// セグメント状態の取得(旧データ互換: フィールド欠損時は初期値で補完)
+function getSegState(session) {
+  return {
+    segmentStart: session.segmentStartRotations ?? session.startRotations,
+    cumulative: session.cumulativeRotations ?? 0,
+  };
+}
+
+// 累計回転数 = 過去セグメント累計 + 現セグメント差分(機械表示 - セグメント開始値)
+function totalDRot(session, currentRot) {
+  const { segmentStart, cumulative } = getSegState(session);
+  return cumulative + Math.max(0, currentRot - segmentStart);
 }
 
 export default function SessionRecorder({ machines, onComplete }) {
@@ -55,8 +75,11 @@ export default function SessionRecorder({ machines, onComplete }) {
       startBalls,
       currentRotations: startRotations,
       currentBalls: startBalls,
+      // セグメント管理: あたり後に機械表示がリセットされても累計を保持する
+      cumulativeRotations: 0,          // 確定済みセグメント合計(あたり前までの累計)
+      segmentStartRotations: startRotations, // 現セグメントの開始機械表示
       totalInvestment: 0,
-      hits: [],       // [{ atRotations, newRotations, ballsAfter, timestamp }]
+      hits: [],       // [{ atMachineRot, atCumulative, resumeMachineRot, segmentRot, ballsBefore, ballsAfter, ballsGained, addedInvestment, timestamp }]
       snapshots: [],  // [{ rotations, balls, investment, timestamp }]
       phase: 'playing',
     });
@@ -89,13 +112,16 @@ export default function SessionRecorder({ machines, onComplete }) {
     const curBalls = numOr(curBallsInput, session.currentBalls);
     const addInv = numOr(addInvInput, 0);
     const totalInv = session.totalInvestment + addInv;
-    const effInv = effectiveInvestment(totalInv, session.startBalls, curBalls);
-    return calcPerK(curRot, session.startRotations, effInv);
+    const cumInv = cumulativeInvestment(totalInv, session.startBalls, curBalls, sumHitBallsGained(session.hits));
+    return calcPerK(totalDRot(session, curRot), cumInv);
   }, [session, curRotInput, curBallsInput, addInvInput]);
 
   // 入力欄の値を session にコミット
   const commitCurrent = () => {
-    const curRot = numOr(curRotInput, session.currentRotations);
+    const parsedRot = numOr(curRotInput, session.currentRotations);
+    const { segmentStart } = getSegState(session);
+    // 現セグメント内では機械表示が開始値を下回らないようガード
+    const curRot = Math.max(parsedRot, segmentStart);
     const curBalls = numOr(curBallsInput, session.currentBalls);
     const addInv = numOr(addInvInput, 0);
     return {
@@ -127,25 +153,28 @@ export default function SessionRecorder({ machines, onComplete }) {
   const handleEnd = () => {
     if (!confirm('遊戯を終了して履歴に保存しますか？')) return;
     const updated = commitCurrent();
-    const totalRot = updated.currentRotations - updated.startRotations;
-    const effInv = effectiveInvestment(
+    const totalRot = totalDRot(updated, updated.currentRotations);
+    const cumInv = cumulativeInvestment(
       updated.totalInvestment,
       updated.startBalls,
-      updated.currentBalls
+      updated.currentBalls,
+      sumHitBallsGained(updated.hits)
     );
     const record = {
       id: updated.id,
       date: updated.date,
       machineId: updated.machineId,
       notes: updated.notes,
-      // RecordList / summarize 互換フィールド (玉価値考慮済み)
+      // RecordList / summarize 互換フィールド (累計投資額)
       rotations: Math.max(0, totalRot),
-      investment: Math.max(0, Math.round(effInv)),
+      investment: Math.max(0, Math.round(cumInv)),
       // セッション詳細
       startRotations: updated.startRotations,
       startBalls: updated.startBalls,
       endRotations: updated.currentRotations,
       endBalls: updated.currentBalls,
+      cumulativeRotations: updated.cumulativeRotations ?? 0,
+      segmentStartRotations: updated.segmentStartRotations ?? updated.startRotations,
       totalInvestment: updated.totalInvestment,
       hits: updated.hits,
       snapshots: updated.snapshots,
@@ -159,13 +188,15 @@ export default function SessionRecorder({ machines, onComplete }) {
   };
 
   // ====== hit-input ======
-  const [hitRotInput, setHitRotInput] = useState('');
+  // hitResumeRotInput: あたり→時短などを抜けて通常プレイに戻った時点の「機械表示」の値。
+  // パチンコは大当りで機械表示がリセットされるのが一般的なので、通常は 0 近辺になる。
+  const [hitResumeRotInput, setHitResumeRotInput] = useState('');
   const [hitBallsInput, setHitBallsInput] = useState('');
   const [hitAddInvInput, setHitAddInvInput] = useState('');
 
   useEffect(() => {
     if (session?.phase === 'hit-input') {
-      setHitRotInput(String(session.currentRotations));
+      setHitResumeRotInput('0');
       setHitBallsInput(String(session.currentBalls));
       setHitAddInvInput('');
     }
@@ -174,35 +205,45 @@ export default function SessionRecorder({ machines, onComplete }) {
   // あたり画面のライブ計算プレビュー（再開後の状態をシミュレート）
   const hitLiveStats = useMemo(() => {
     if (!session || session.phase !== 'hit-input') return null;
-    const parsedRot = numOr(hitRotInput, session.currentRotations);
-    // あたり発生時の累計回転数を下回らないようガード
-    const newRot = Math.max(parsedRot, session.currentRotations);
+    const resumeRot = numOr(hitResumeRotInput, 0);
     const newBalls = numOr(hitBallsInput, session.currentBalls);
     const addInv = numOr(hitAddInvInput, 0);
     const totalInv = session.totalInvestment + addInv;
-    const effInv = effectiveInvestment(totalInv, session.startBalls, newBalls);
-    const dRot = Math.max(0, newRot - session.startRotations);
+    // このあたりまでのセグメント分(機械表示ベース)
+    const { segmentStart, cumulative } = getSegState(session);
+    const thisSegmentRot = Math.max(0, session.currentRotations - segmentStart);
+    // あたり確定時点の累計回転数
+    const newCumulative = cumulative + thisSegmentRot;
+    // 累計投資: このあたりで増えた球分を含め、全あたりの払い出し球は差し引かない
+    const thisHitGained = newBalls - session.currentBalls;
+    const totalHitGained = sumHitBallsGained(session.hits) + thisHitGained;
+    const cumInv = cumulativeInvestment(totalInv, session.startBalls, newBalls, totalHitGained);
+    // 再開直後は新セグメント差分 0 なので累計 = newCumulative
     return {
-      newRot,
+      resumeRot,
       newBalls,
-      dRot,
+      thisSegmentRot,
+      newCumulative,
       totalInv,
-      effInv,
-      perK: calcPerK(newRot, session.startRotations, effInv),
-      ballsGained: newBalls - session.currentBalls,
-      rotRegression: parsedRot < session.currentRotations,
+      cumInv,
+      perK: calcPerK(newCumulative, cumInv),
+      ballsGained: thisHitGained,
     };
-  }, [session, hitRotInput, hitBallsInput, hitAddInvInput]);
+  }, [session, hitResumeRotInput, hitBallsInput, hitAddInvInput]);
 
   const handleResume = () => {
-    const parsedRot = numOr(hitRotInput, session.currentRotations);
-    // 累計回転数はあたり発生時の値を下回らないようガード（ラベル誤読による巻き戻しを防止）
-    const newRot = Math.max(parsedRot, session.currentRotations);
+    const resumeRot = numOr(hitResumeRotInput, 0);
     const newBalls = numOr(hitBallsInput, session.currentBalls);
     const addInv = numOr(hitAddInvInput, 0);
+    const { segmentStart, cumulative } = getSegState(session);
+    // このセグメントで回した分をあたり発生時点で確定して累計に加算
+    const thisSegmentRot = Math.max(0, session.currentRotations - segmentStart);
+    const newCumulative = cumulative + thisSegmentRot;
     const hit = {
-      atRotations: session.currentRotations,
-      newRotations: newRot,
+      atMachineRot: session.currentRotations,
+      atCumulative: newCumulative,
+      resumeMachineRot: resumeRot,
+      segmentRot: thisSegmentRot,
       ballsBefore: session.currentBalls,
       ballsAfter: newBalls,
       ballsGained: newBalls - session.currentBalls,
@@ -211,13 +252,16 @@ export default function SessionRecorder({ machines, onComplete }) {
     };
     setSession({
       ...session,
-      currentRotations: newRot,
+      // 次セグメント: 機械表示は resumeRot から始まる
+      currentRotations: resumeRot,
+      segmentStartRotations: resumeRot,
+      cumulativeRotations: newCumulative,
       currentBalls: newBalls,
       totalInvestment: session.totalInvestment + addInv,
       hits: [...session.hits, hit],
       phase: 'playing',
     });
-    setHitRotInput('');
+    setHitResumeRotInput('');
     setHitBallsInput('');
     setHitAddInvInput('');
   };
@@ -307,7 +351,9 @@ export default function SessionRecorder({ machines, onComplete }) {
   if (session.phase === 'hit-input') {
     const atRot = session.currentRotations;
     const atBalls = session.currentBalls;
-    const preHitDRot = atRot - session.startRotations;
+    const { segmentStart: _segStart, cumulative: _cum } = getSegState(session);
+    const thisSegmentRot = Math.max(0, atRot - _segStart);
+    const preHitCumulative = _cum + thisSegmentRot;
     const stats = hitLiveStats;
     return (
       <div className="p-4 space-y-4">
@@ -316,12 +362,14 @@ export default function SessionRecorder({ machines, onComplete }) {
           <div className="font-bold text-slate-900 dark:text-white">{machine?.name ?? '不明'}</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-1">
             <div className="text-slate-600 dark:text-slate-300">開始からの累計回転</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{preHitDRot.toLocaleString()} 回</div>
-            <div className="text-slate-600 dark:text-slate-300">あたり時の回転数</div>
+            <div className="text-right font-semibold text-slate-900 dark:text-white">{preHitCumulative.toLocaleString()} 回</div>
+            <div className="text-slate-600 dark:text-slate-300">今回セグメントで回した</div>
+            <div className="text-right font-semibold text-slate-900 dark:text-white">{thisSegmentRot.toLocaleString()} 回</div>
+            <div className="text-slate-600 dark:text-slate-300">あたり時の機械表示</div>
             <div className="text-right font-semibold text-slate-900 dark:text-white">{atRot.toLocaleString()} 回</div>
             <div className="text-slate-600 dark:text-slate-300">あたり時の持ち玉</div>
             <div className="text-right font-semibold text-slate-900 dark:text-white">{atBalls.toLocaleString()} 個</div>
-            <div className="text-slate-600 dark:text-slate-300">累計投資</div>
+            <div className="text-slate-600 dark:text-slate-300">現金投資</div>
             <div className="text-right font-semibold text-slate-900 dark:text-white">¥{session.totalInvestment.toLocaleString()}</div>
             <div className="text-slate-600 dark:text-slate-300">今回までのあたり</div>
             <div className="text-right font-semibold text-slate-900 dark:text-white">{session.hits.length} 回</div>
@@ -332,23 +380,21 @@ export default function SessionRecorder({ machines, onComplete }) {
 
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-            現在の回転数（機械表示の合計）
+            再開時の機械表示（回転数）
           </label>
           <input
             type="number"
             inputMode="numeric"
-            value={hitRotInput}
-            onChange={(e) => setHitRotInput(e.target.value)}
+            value={hitResumeRotInput}
+            onChange={(e) => setHitResumeRotInput(e.target.value)}
             className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+            placeholder="例: 0"
           />
           <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            ※ 機械に表示されている「合計の回転数」を入力してください（あたり時の {atRot.toLocaleString()}回 以上）
+            ※ 大当り後は機械表示がリセットされます。通常プレイに戻った時点の機械の表示値を入力してください。
+            <br />
+            　時短で100回転消化して再開なら「100」、すぐ通常に戻ったなら「0」です。
           </div>
-          {stats?.rotRegression && (
-            <div className="text-xs text-red-600 dark:text-red-400 mt-1">
-              ⚠️ あたり時の値を下回っています。自動的に {atRot.toLocaleString()}回 として扱います。
-            </div>
-          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
@@ -380,7 +426,7 @@ export default function SessionRecorder({ machines, onComplete }) {
             placeholder="あたり中に追加した金額があれば"
           />
           <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            累計投資: ¥{session.totalInvestment.toLocaleString()}
+            現金投資: ¥{session.totalInvestment.toLocaleString()}
             {hitAddInvInput ? ` → ¥${(stats?.totalInv ?? session.totalInvestment).toLocaleString()}` : ''}
           </div>
         </div>
@@ -390,15 +436,15 @@ export default function SessionRecorder({ machines, onComplete }) {
             <div className="font-semibold text-slate-900 dark:text-white text-xs mb-1">再開後の状態（プレビュー）</div>
             <div className="flex justify-between">
               <span className="text-slate-600 dark:text-slate-300">開始からの累計回転</span>
-              <span className="font-semibold text-slate-900 dark:text-white">{stats.dRot.toLocaleString()} 回</span>
+              <span className="font-semibold text-slate-900 dark:text-white">{stats.newCumulative.toLocaleString()} 回</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">累計投資</span>
+              <span className="text-slate-600 dark:text-slate-300">現金投資</span>
               <span className="font-semibold text-slate-900 dark:text-white">¥{stats.totalInv.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">実質投資（玉価値考慮）</span>
-              <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(stats.effInv)).toLocaleString()}</span>
+              <span className="text-slate-600 dark:text-slate-300">累計投資</span>
+              <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(stats.cumInv)).toLocaleString()}</span>
             </div>
             <div className="flex justify-between pt-1 border-t border-slate-300 dark:border-slate-700">
               <span className="font-bold text-slate-900 dark:text-white">1K回転数</span>
@@ -423,11 +469,17 @@ export default function SessionRecorder({ machines, onComplete }) {
   }
 
   // ----- playing -----
-  const dRot = numOr(curRotInput, session.currentRotations) - session.startRotations;
+  const curRotLive = numOr(curRotInput, session.currentRotations);
+  const dRot = totalDRot(session, curRotLive);
+  const { segmentStart: segStartLive, cumulative: cumLive } = getSegState(session);
+  const thisSegLive = Math.max(0, curRotLive - segStartLive);
   const totalInvDisplay = session.totalInvestment + numOr(addInvInput, 0);
   const curBalls = numOr(curBallsInput, session.currentBalls);
-  const effInv = effectiveInvestment(totalInvDisplay, session.startBalls, curBalls);
+  const cumInv = cumulativeInvestment(totalInvDisplay, session.startBalls, curBalls, sumHitBallsGained(session.hits));
   const delta = livePerK - border;
+  const evPerRot = machine ? expectedValuePerRotation(livePerK, machine) : 0;
+  const hourlyEV = evPerRot * 200;
+  const totalEV = evPerRot * Math.max(0, dRot);
 
   return (
     <div className="p-4 space-y-4">
@@ -441,7 +493,7 @@ export default function SessionRecorder({ machines, onComplete }) {
             </div>
             {session.hits.length > 0 && (
               <div className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
-                🎉 あたり {session.hits.length}回
+                🎉 あたり {session.hits.length}回 / 確定累計 {cumLive.toLocaleString()}回
               </div>
             )}
           </div>
@@ -455,7 +507,7 @@ export default function SessionRecorder({ machines, onComplete }) {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の回転数</label>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の回転数（機械表示）</label>
         <input
           type="number"
           inputMode="numeric"
@@ -463,6 +515,11 @@ export default function SessionRecorder({ machines, onComplete }) {
           onChange={(e) => setCurRotInput(e.target.value)}
           className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
         />
+        {session.hits.length > 0 && (
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            現セグメント開始: {segStartLive.toLocaleString()}回 → 今のセグメント: {thisSegLive.toLocaleString()}回
+          </div>
+        )}
       </div>
       <div>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の残玉数</label>
@@ -485,7 +542,7 @@ export default function SessionRecorder({ machines, onComplete }) {
           placeholder="例: 1000"
         />
         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          累計投資: ¥{session.totalInvestment.toLocaleString()}
+          現金投資: ¥{session.totalInvestment.toLocaleString()}
           {addInvInput ? ` → ¥${totalInvDisplay.toLocaleString()}` : ''}
         </div>
       </div>
@@ -496,12 +553,12 @@ export default function SessionRecorder({ machines, onComplete }) {
           <span className="font-semibold text-slate-900 dark:text-white">{Math.max(0, dRot).toLocaleString()} 回</span>
         </div>
         <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">累計投資</span>
+          <span className="text-slate-600 dark:text-slate-300">現金投資</span>
           <span className="font-semibold text-slate-900 dark:text-white">¥{totalInvDisplay.toLocaleString()}</span>
         </div>
         <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">実質投資 (玉価値考慮)</span>
-          <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(effInv)).toLocaleString()}</span>
+          <span className="text-slate-600 dark:text-slate-300">累計投資</span>
+          <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(cumInv)).toLocaleString()}</span>
         </div>
         <div className="text-sm flex justify-between">
           <span className="text-slate-600 dark:text-slate-300">ボーダー</span>
@@ -514,6 +571,18 @@ export default function SessionRecorder({ machines, onComplete }) {
             <span className="text-xs ml-1">
               ({delta >= 0 ? '+' : ''}{delta.toFixed(2)})
             </span>
+          </span>
+        </div>
+        <div className="text-sm flex justify-between">
+          <span className="text-slate-600 dark:text-slate-300">現在の期待時給 <span className="text-xs text-slate-500">(200回転/h)</span></span>
+          <span className={`font-semibold ${hourlyEV >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+            {hourlyEV >= 0 ? '+' : ''}¥{Math.round(hourlyEV).toLocaleString()}
+          </span>
+        </div>
+        <div className="text-sm flex justify-between">
+          <span className="text-slate-600 dark:text-slate-300">現在までの期待値</span>
+          <span className={`font-semibold ${totalEV >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+            {totalEV >= 0 ? '+' : ''}¥{Math.round(totalEV).toLocaleString()}
           </span>
         </div>
       </div>
