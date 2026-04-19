@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { calcBorder } from '../utils/calculations';
 import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
 
 export default function MachineManager({ machines, setMachines }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [draggingId, setDraggingId] = useState(null);
+  const pressTimerRef = useRef(null);
+  const pressPosRef = useRef(null);
+  const cardRefs = useRef({});
   const [form, setForm] = useState({
     name: '',
     probability: '',
@@ -93,6 +97,66 @@ export default function MachineManager({ machines, setMachines }) {
     } finally {
       setDmmLoading(false);
     }
+  };
+
+  // 長押しドラッグで並べ替え
+  const LONG_PRESS_MS = 500;
+  const MOVE_CANCEL_PX = 8;
+
+  const cancelPress = () => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    pressPosRef.current = null;
+  };
+
+  const handleCardPointerDown = (id, e) => {
+    // 編集/削除ボタン等の操作は長押し対象外 (呼び出し側で stopPropagation 済み)
+    pressPosRef.current = { x: e.clientX, y: e.clientY };
+    // ドラッグ中も確実に pointermove を受け取るためポインタを捕捉
+    const target = e.currentTarget;
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch { /* noop */ }
+    pressTimerRef.current = setTimeout(() => {
+      setDraggingId(id);
+      pressTimerRef.current = null;
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, LONG_PRESS_MS);
+  };
+
+  const handleCardPointerMove = (e) => {
+    // 長押し発動前に大きく動いたらキャンセル (スクロールとして扱う)
+    if (pressTimerRef.current && pressPosRef.current) {
+      const dx = e.clientX - pressPosRef.current.x;
+      const dy = e.clientY - pressPosRef.current.y;
+      if (Math.hypot(dx, dy) > MOVE_CANCEL_PX) cancelPress();
+    }
+    if (!draggingId) return;
+    e.preventDefault();
+    const fromIdx = machines.findIndex((m) => m.id === draggingId);
+    if (fromIdx < 0) return;
+    let toIdx = fromIdx;
+    for (let i = 0; i < machines.length; i++) {
+      const el = cardRefs.current[machines[i].id];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const mid = r.top + r.height / 2;
+      if (e.clientY < mid && i < fromIdx && i < toIdx) toIdx = i;
+      if (e.clientY > mid && i > fromIdx && i > toIdx) toIdx = i;
+    }
+    if (toIdx !== fromIdx) {
+      const next = [...machines];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      setMachines(next);
+    }
+  };
+
+  const handleCardPointerUp = () => {
+    cancelPress();
+    setDraggingId(null);
   };
 
   const handleDmmPaste = () => {
@@ -289,10 +353,29 @@ export default function MachineManager({ machines, setMachines }) {
       <div className="space-y-2">
         {machines.map((m) => {
           const border = calcBorder(m);
+          const isDragging = draggingId === m.id;
           return (
             <div
               key={m.id}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm"
+              ref={(el) => {
+                if (el) cardRefs.current[m.id] = el;
+                else delete cardRefs.current[m.id];
+              }}
+              onPointerDown={(e) => handleCardPointerDown(m.id, e)}
+              onPointerMove={handleCardPointerMove}
+              onPointerUp={handleCardPointerUp}
+              onPointerCancel={handleCardPointerUp}
+              onPointerLeave={(e) => {
+                // ドラッグ中以外は、要素外に出たら長押しタイマーをキャンセル
+                if (!draggingId) cancelPress();
+                else e.preventDefault();
+              }}
+              style={{ touchAction: draggingId ? 'none' : 'auto' }}
+              className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm transition-shadow select-none ${
+                isDragging
+                  ? 'border-blue-500 ring-2 ring-blue-400 shadow-lg opacity-90 scale-[1.02] cursor-grabbing'
+                  : 'border-slate-200 dark:border-slate-700'
+              }`}
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
@@ -309,12 +392,14 @@ export default function MachineManager({ machines, setMachines }) {
                 </div>
                 <div className="flex gap-1">
                   <button
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => handleEdit(m)}
                     className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
                   >
                     編集
                   </button>
                   <button
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => handleDelete(m.id)}
                     className="text-red-500 text-xs px-2 py-1"
                   >
@@ -334,6 +419,9 @@ export default function MachineManager({ machines, setMachines }) {
         </div>
         <div className="mt-1">
           <strong>+ 追加 ボタン:</strong> 手動で初当たり確率と平均出玉（連チャン込み）を入力します。ボーダーは自動計算されます。
+        </div>
+        <div className="mt-1">
+          <strong>並べ替え:</strong> カードを長押し（約0.5秒）→ 上下にドラッグで順番を入れ替えられます。
         </div>
       </div>
     </div>
