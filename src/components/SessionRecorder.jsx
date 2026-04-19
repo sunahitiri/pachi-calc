@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { calcBorder } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import SessionDetail from './SessionDetail';
 
 const BALL_VALUE = 4; // 1玉 = 4円 (玉貸しレート)
 
@@ -140,6 +141,7 @@ export default function SessionRecorder({ machines, onComplete }) {
   const [curRotInput, setCurRotInput] = useState('');
   const [curBallsInput, setCurBallsInput] = useState('');
   const [addInvInput, setAddInvInput] = useState('');
+  const [showDetail, setShowDetail] = useState(false);
 
   // 遊戯セッション切替時に入力欄を同期
   useEffect(() => {
@@ -182,18 +184,6 @@ export default function SessionRecorder({ machines, onComplete }) {
       currentBalls: curBalls,
       totalInvestment: session.totalInvestment + addInv,
     };
-  };
-
-  const handleMidUpdate = () => {
-    const updated = commitCurrent();
-    const snapshot = {
-      rotations: updated.currentRotations,
-      balls: updated.currentBalls,
-      investment: updated.totalInvestment,
-      timestamp: new Date().toISOString(),
-    };
-    setSession({ ...updated, snapshots: [...updated.snapshots, snapshot] });
-    setAddInvInput('');
   };
 
   const handleHit = () => {
@@ -658,13 +648,7 @@ export default function SessionRecorder({ machines, onComplete }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        <button
-          onClick={handleMidUpdate}
-          className="bg-slate-600 text-white py-3 rounded-lg font-bold hover:bg-slate-700 active:bg-slate-800 text-sm"
-        >
-          🔄 遊戯途中
-        </button>
+      <div className="grid grid-cols-2 gap-2">
         <button
           onClick={handleHit}
           className="bg-orange-500 text-white py-3 rounded-lg font-bold hover:bg-orange-600 active:bg-orange-700 text-sm"
@@ -678,6 +662,25 @@ export default function SessionRecorder({ machines, onComplete }) {
           ⏹ 遊戯終了
         </button>
       </div>
+
+      <button
+        onClick={() => setShowDetail((v) => !v)}
+        className="w-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 py-2 rounded-lg font-medium text-sm hover:bg-slate-300 dark:hover:bg-slate-600"
+      >
+        {showDetail ? '▾ 遊戯詳細を閉じる' : '▸ 遊戯詳細を表示'}
+      </button>
+
+      {showDetail && (
+        <SessionDetail
+          session={session}
+          machines={machines}
+          onChange={(updated) => setSession(updated)}
+          onDeleteHit={(idx) => {
+            const newHits = session.hits.filter((_, i) => i !== idx);
+            setSession({ ...session, hits: newHits });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -28,6 +28,10 @@ function App() {
     setRecords(records.filter((r) => r.id !== id));
   };
 
+  const handleUpdate = (updated) => {
+    setRecords(records.map((r) => (r.id === updated.id ? updated : r)));
+  };
+
   // --- 指に追随するタブ切替 (iPhone ホーム画面風) ---
   const handleTouchStart = (e) => {
     // 入力要素/ボタン上のタッチは無視 (通常操作と競合させない)
@@ -133,7 +137,12 @@ function App() {
             className="flex-shrink-0 h-full overflow-y-auto pb-8"
             style={{ width: `${100 / TABS.length}%` }}
           >
-            <RecordList records={records} machines={machines} onDelete={handleDelete} />
+            <RecordList
+              records={records}
+              machines={machines}
+              onDelete={handleDelete}
+              onUpdate={handleUpdate}
+            />
           </div>
           <div
             className="flex-shrink-0 h-full overflow-y-auto pb-8"

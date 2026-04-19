@@ -77,7 +77,7 @@ export function summarize(records, machines) {
     (acc, r) => {
       const machine = machineMap[r.machineId];
       acc.totalRotations += Number(r.rotations) || 0;
-      acc.totalInvestment += Number(r.investment) || 0;
+      acc.totalInvestment += Number(r.totalInvestment ?? r.investment) || 0;
       if (machine) {
         acc.totalExpectedValue += r.isSession
           ? calcSessionExpectedValue(r, machine)

@@ -47,8 +47,11 @@ export function parseSpec(html, sourceUrl = '') {
     doc.querySelector('h1')?.textContent?.trim() ||
     '名称不明';
 
-  // 大当たり確率: "大当り確率 1/349.9" 形式
-  const probMatch = bodyText.match(/大当[たり]?り?確率\s*1\/(\d+(?:\.\d+)?)/);
+  // 大当たり確率: "大当り確率 1/349.9" / "大当り確率 約1/399" 形式
+  // ラッキートリガー機などは「約1/399」と「約」が入るため非数字を許容する
+  const probMatch = bodyText.match(
+    /大当[たり]?り?確率[^\d\n]{0,20}?1\s*\/\s*(\d+(?:\.\d+)?)/
+  );
   const probability = probMatch ? parseFloat(probMatch[1]) : null;
 
   // 初当り期待出玉: "初当り1回あたりの期待出玉 ... 5,282玉"

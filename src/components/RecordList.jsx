@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { calcExpectedValue, calcSessionExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
+import SessionDetail from './SessionDetail';
 
 // セッション記録の収支(円)の合計 — 非セッション記録は対象外
 function computeProfit(records, machineMap) {
@@ -33,7 +34,7 @@ function StatsRow({ summary, profit, dark = false }) {
   return (
     <div className="grid grid-cols-2 gap-2 text-center text-sm">
       <div>
-        <div className={`text-xs ${labelClass}`}>投資額</div>
+        <div className={`text-xs ${labelClass}`}>現金投資</div>
         <div className={`font-semibold ${valueClass}`}>¥{summary.totalInvestment.toLocaleString()}</div>
       </div>
       <div>
@@ -52,7 +53,7 @@ function StatsRow({ summary, profit, dark = false }) {
   );
 }
 
-function RecordCard({ r, machineMap, onDelete }) {
+function RecordCard({ r, machineMap, onOpen }) {
   const machine = machineMap[r.machineId];
   const ev = !machine
     ? 0
@@ -63,70 +64,52 @@ function RecordCard({ r, machineMap, onDelete }) {
         investment: r.investment,
         machine,
       });
-  const perK = rotationsPer1K(r.rotations, r.investment);
   const exRate = r.exchangeRate ?? machine?.exchangeRate ?? 4;
-  const border = machine ? calcBorder({ ...machine, exchangeRate: exRate }) : 0;
   const cashInv = Number(r.totalInvestment ?? r.investment) || 0;
   const profit = r.isSession
     ? ((Number(r.endBalls) || 0) - (Number(r.startBalls) || 0)) * exRate - cashInv
     : null;
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm">
-      <div className="flex justify-between items-start mb-1">
-        <div>
-          <div className="text-sm text-slate-500 dark:text-slate-400">{r.date}</div>
-          <div className="font-medium text-slate-900 dark:text-white">
-            {machine?.name ?? '（削除済み機種）'}
-          </div>
+    <button
+      type="button"
+      onClick={() => onOpen?.(r)}
+      className="w-full text-left bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700/50 active:bg-slate-100 dark:active:bg-slate-700 transition"
+    >
+      <div className="mb-1">
+        <div className="text-sm text-slate-500 dark:text-slate-400">{r.date}</div>
+        <div className="font-medium text-slate-900 dark:text-white break-words">
+          {machine?.name ?? '（削除済み機種）'}
         </div>
-        <button
-          onClick={() => {
-            if (confirm('この記録を削除しますか？')) onDelete(r.id);
-          }}
-          className="text-red-500 hover:text-red-700 text-sm"
-          aria-label="削除"
-        >
-          削除
-        </button>
       </div>
       <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 dark:text-slate-300 mt-2">
-        <div>投資: ¥{r.investment.toLocaleString()}</div>
-        <div>回転: {r.rotations.toLocaleString()}</div>
-        <div>1K: {perK.toFixed(1)}回 (B:{border.toFixed(1)})</div>
         <div className={`font-semibold ${ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
           期待値: {formatSignedYen(ev)}
         </div>
         {profit !== null && (
-          <div className={`col-span-2 font-semibold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+          <div className={`font-semibold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
             収支: {formatSignedYen(profit)}
           </div>
         )}
       </div>
-      {r.isSession && (
-        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded px-2 py-1">
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-            <span>🎮 セッション</span>
-            <span>あたり {r.hits?.length ?? 0}回</span>
-            <span>{r.startRotations?.toLocaleString()} → {r.endRotations?.toLocaleString()}回</span>
-            <span>持玉 {r.startBalls?.toLocaleString()} → {r.endBalls?.toLocaleString()}個</span>
-            {typeof r.totalInvestment === 'number' && r.totalInvestment !== r.investment && (
-              <span>現金投資 ¥{r.totalInvestment.toLocaleString()}</span>
-            )}
-          </div>
-        </div>
-      )}
       {r.notes && (
         <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">📝 {r.notes}</div>
       )}
-    </div>
+    </button>
   );
 }
 
-export default function RecordList({ records, machines, onDelete }) {
+export default function RecordList({ records, machines, onDelete, onUpdate }) {
   const machineMap = useMemo(
     () => Object.fromEntries(machines.map((m) => [m.id, m])),
     [machines]
+  );
+
+  // 編集中の記録 ID
+  const [editingId, setEditingId] = useState(null);
+  const editingRecord = useMemo(
+    () => records.find((r) => r.id === editingId) || null,
+    [records, editingId]
   );
 
   const summary = useMemo(() => summarize(records, machines), [records, machines]);
@@ -200,6 +183,131 @@ export default function RecordList({ records, machines, onDelete }) {
       return next;
     });
   };
+
+  // ===== 編集ビュー =====
+  if (editingRecord) {
+    const machine = machineMap[editingRecord.machineId];
+    const exRate = editingRecord.exchangeRate ?? machine?.exchangeRate ?? 4;
+    const cashInv = Number(editingRecord.totalInvestment ?? editingRecord.investment) || 0;
+    const startBalls = Number(editingRecord.startBalls) || 0;
+    const endBalls = Number(editingRecord.endBalls) || 0;
+    const profit = editingRecord.isSession
+      ? (endBalls - startBalls) * exRate - cashInv
+      : 0;
+    const ev = !machine
+      ? 0
+      : editingRecord.isSession
+      ? calcSessionExpectedValue(editingRecord, machine)
+      : calcExpectedValue({
+          totalRotations: editingRecord.rotations,
+          investment: editingRecord.investment,
+          machine,
+        });
+    // 1Kあたり回転数は常に 1玉=4円 換算。持ち玉で回した分も 4円 として投資額に含める。
+    //   投資相当額(円) = 現金 + (startBalls + hitPayout − endBalls) × 4
+    const hitPayout = (editingRecord.hits || []).reduce(
+      (s, h) => s + (Number(h.ballsGained) || 0),
+      0
+    );
+    const stockConsumed = startBalls + hitPayout - endBalls; // 持ち玉の純消費玉数
+    const effectiveInv4yen = Math.max(0, cashInv + stockConsumed * 4);
+    const perK = rotationsPer1K(editingRecord.rotations, effectiveInv4yen);
+    const border = machine ? calcBorder({ ...machine, exchangeRate: exRate }) : 0;
+
+    return (
+      <div className="p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditingId(null)}
+            className="text-slate-600 dark:text-slate-300 text-sm px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+          >
+            ← 戻る
+          </button>
+          <h2 className="font-bold text-slate-900 dark:text-white flex-1">
+            {editingRecord.date} {machine?.name ?? '（削除済み機種）'}
+          </h2>
+          <button
+            onClick={() => {
+              if (confirm('この記録を削除しますか？')) {
+                onDelete(editingRecord.id);
+                setEditingId(null);
+              }
+            }}
+            className="text-red-500 text-sm px-2 py-1"
+          >
+            削除
+          </button>
+        </div>
+
+        {editingRecord.isSession ? (
+          <SessionDetail
+            session={editingRecord}
+            machines={machines}
+            includeEndRow
+            onChange={(updated) => onUpdate?.(updated)}
+            onDeleteHit={(idx) => {
+              const newHits = (editingRecord.hits || []).filter((_, i) => i !== idx);
+              onUpdate?.({ ...editingRecord, hits: newHits });
+            }}
+          />
+        ) : (
+          <div className="text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
+            この記録はセッション形式ではないため、詳細編集できません。
+          </div>
+        )}
+
+        {/* サマリ (リアルタイム) */}
+        <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 space-y-1 text-sm">
+          <div className="flex justify-between">
+            <span className="text-slate-600 dark:text-slate-300">累計回転</span>
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {(editingRecord.rotations || 0).toLocaleString()} 回
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600 dark:text-slate-300">投資 (現金)</span>
+            <span className="font-semibold text-slate-900 dark:text-white">
+              ¥{cashInv.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600 dark:text-slate-300">1Kあたり回転数</span>
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {perK.toFixed(1)} 回 {machine ? `(B:${border.toFixed(1)})` : ''}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600 dark:text-slate-300">期待値</span>
+            <span
+              className={`font-semibold ${
+                ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+              }`}
+            >
+              {formatSignedYen(ev)}
+            </span>
+          </div>
+          {editingRecord.isSession && (
+            <div className="flex justify-between">
+              <span className="text-slate-600 dark:text-slate-300">収支</span>
+              <span
+                className={`font-semibold ${
+                  profit >= 0
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}
+              >
+                {formatSignedYen(profit)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="text-xs text-slate-500 dark:text-slate-400 bg-yellow-50 dark:bg-yellow-900/20 rounded p-2">
+          💡 各項目を編集すると自動的に保存されます。
+        </div>
+      </div>
+    );
+  }
 
   if (records.length === 0) {
     return (
@@ -317,7 +425,7 @@ export default function RecordList({ records, machines, onDelete }) {
                                 key={r.id}
                                 r={r}
                                 machineMap={machineMap}
-                                onDelete={onDelete}
+                                onOpen={() => setEditingId(r.id)}
                               />
                             ))}
                           </div>
