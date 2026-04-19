@@ -1,8 +1,15 @@
 import { useState, useMemo, useEffect } from 'react';
-import { calcBorder, expectedValuePerRotation } from '../utils/calculations';
+import { calcBorder } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
-const BALL_VALUE = 4; // 1玉 = 4円
+const BALL_VALUE = 4; // 1玉 = 4円 (玉貸しレート)
+
+// 交換レートの選択肢 (1玉 = X円: 景品交換時の換金価値)
+const EXCHANGE_OPTIONS = [
+  { id: '28', label: '28玉交換', rate: 100 / 28 },
+  { id: '25', label: '25玉交換 (等価)', rate: 4 },
+];
+const DEFAULT_EXCHANGE_ID = '28';
 
 function todayStr() {
   const d = new Date();
@@ -27,6 +34,43 @@ function cumulativeInvestment(totalInvestment, startBalls, currentBalls, hitBall
 function calcPerK(dRot, cumInv) {
   if (cumInv <= 0 || dRot <= 0) return 0;
   return (dRot * 1000) / cumInv;
+}
+
+// 現金・持ち玉を区別した厳密コスト内訳
+// 方針: 現金で借りた玉(totalInvestment/4)を先に消費したとみなし、残りを持ち玉消費とする
+function strictCostBreakdown(session, currentBalls, currentTotalInv, dRot) {
+  const cashBalls = currentTotalInv / BALL_VALUE;
+  const hitPayout = sumHitBallsGained(session.hits);
+  const totalConsumed = session.startBalls + cashBalls + hitPayout - currentBalls;
+  const cashConsumed = Math.max(0, Math.min(cashBalls, totalConsumed));
+  const stockConsumed = Math.max(0, totalConsumed - cashConsumed);
+  return {
+    totalConsumed,
+    cashConsumed,
+    stockConsumed,
+    ballsPerRot: dRot > 0 ? totalConsumed / dRot : 0,
+  };
+}
+
+// 累計期待値(厳密版): 現金コストは 4円/玉、持ち玉コストは exchangeRate/玉
+function strictTotalEV(session, currentBalls, currentTotalInv, dRot, machine) {
+  if (!machine || dRot <= 0) return 0;
+  const incomePerRot = (1 / machine.probability) * machine.averagePayout * machine.exchangeRate;
+  const { cashConsumed, stockConsumed } = strictCostBreakdown(session, currentBalls, currentTotalInv, dRot);
+  const cashCost = cashConsumed * BALL_VALUE;
+  const stockCost = stockConsumed * machine.exchangeRate;
+  return incomePerRot * dRot - (cashCost + stockCost);
+}
+
+// 期待時給: 「持ち玉のみで打ち続けた場合」の EV/回転 × 回転/時
+// → 現金投資なしで rotationsPerHour 回転した場合の累計期待値と一致する
+function strictHourlyEV(session, currentBalls, currentTotalInv, dRot, machine, rotationsPerHour = 200) {
+  if (!machine || dRot <= 0) return 0;
+  const incomePerRot = (1 / machine.probability) * machine.averagePayout * machine.exchangeRate;
+  const { ballsPerRot } = strictCostBreakdown(session, currentBalls, currentTotalInv, dRot);
+  if (ballsPerRot <= 0) return 0;
+  const costPerRot = ballsPerRot * machine.exchangeRate;
+  return (incomePerRot - costPerRot) * rotationsPerHour;
 }
 
 // 空文字なら fallback、それ以外は数値に変換 (0 を正しく扱うため `||` は使わない)
@@ -56,6 +100,7 @@ export default function SessionRecorder({ machines, onComplete }) {
 
   // ====== idle: 開始フォーム ======
   const [startDate, setStartDate] = useState(todayStr());
+  const [startExchangeId, setStartExchangeId] = useState(DEFAULT_EXCHANGE_ID);
   const [startMachineId, setStartMachineId] = useState(machines[0]?.id || '');
   const [startRotInput, setStartRotInput] = useState('');
   const [startBallsInput, setStartBallsInput] = useState('');
@@ -65,10 +110,13 @@ export default function SessionRecorder({ machines, onComplete }) {
     if (!startMachineId) return;
     const startRotations = numOr(startRotInput, 0);
     const startBalls = numOr(startBallsInput, 0);
+    const exchangeOpt = EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0];
     setSession({
       id: Date.now().toString(),
       date: startDate,
       machineId: startMachineId,
+      exchangeId: exchangeOpt.id,
+      exchangeRate: exchangeOpt.rate,
       notes: startNotesInput,
       startedAt: new Date().toISOString(),
       startRotations,
@@ -103,7 +151,11 @@ export default function SessionRecorder({ machines, onComplete }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, session?.phase]);
 
-  const machine = session ? machines.find((m) => m.id === session.machineId) : null;
+  const rawMachine = session ? machines.find((m) => m.id === session.machineId) : null;
+  // セッションで選択した交換レートを優先 (旧セッション互換で未設定なら機種の値)
+  const machine = rawMachine
+    ? { ...rawMachine, exchangeRate: session.exchangeRate ?? rawMachine.exchangeRate }
+    : null;
   const border = machine ? calcBorder(machine) : 0;
 
   const livePerK = useMemo(() => {
@@ -164,6 +216,8 @@ export default function SessionRecorder({ machines, onComplete }) {
       id: updated.id,
       date: updated.date,
       machineId: updated.machineId,
+      exchangeId: updated.exchangeId,
+      exchangeRate: updated.exchangeRate,
       notes: updated.notes,
       // RecordList / summarize 互換フィールド (累計投資額)
       rotations: Math.max(0, totalRot),
@@ -284,8 +338,22 @@ export default function SessionRecorder({ machines, onComplete }) {
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+            className="block w-full min-w-0 appearance-none px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
           />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">交換レート</label>
+          <select
+            value={startExchangeId}
+            onChange={(e) => setStartExchangeId(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
+          >
+            {EXCHANGE_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}（1玉 {o.rate.toFixed(2)}円）
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">機種</label>
@@ -295,11 +363,15 @@ export default function SessionRecorder({ machines, onComplete }) {
             className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
           >
             <option value="">選択してください</option>
-            {machines.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}（ボーダー{calcBorder(m).toFixed(1)}）
-              </option>
-            ))}
+            {machines.map((m) => {
+              const rate = (EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0]).rate;
+              const b = calcBorder({ ...m, exchangeRate: rate });
+              return (
+                <option key={m.id} value={m.id}>
+                  {m.name}（ボーダー{b.toFixed(1)}）
+                </option>
+              );
+            })}
           </select>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -477,9 +549,8 @@ export default function SessionRecorder({ machines, onComplete }) {
   const curBalls = numOr(curBallsInput, session.currentBalls);
   const cumInv = cumulativeInvestment(totalInvDisplay, session.startBalls, curBalls, sumHitBallsGained(session.hits));
   const delta = livePerK - border;
-  const evPerRot = machine ? expectedValuePerRotation(livePerK, machine) : 0;
-  const hourlyEV = evPerRot * 200;
-  const totalEV = evPerRot * Math.max(0, dRot);
+  const hourlyEV = strictHourlyEV(session, curBalls, totalInvDisplay, Math.max(0, dRot), machine);
+  const totalEV = strictTotalEV(session, curBalls, totalInvDisplay, Math.max(0, dRot), machine);
 
   return (
     <div className="p-4 space-y-4">

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { calcExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
+import { calcExpectedValue, calcSessionExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
 
 export default function RecordList({ records, machines, onDelete }) {
   const machineMap = useMemo(
@@ -14,6 +14,19 @@ export default function RecordList({ records, machines, onDelete }) {
 
   const summary = useMemo(() => summarize(records, machines), [records, machines]);
 
+  // 収支合計 (セッション記録のみ対象)
+  const totalProfit = useMemo(() => {
+    return records.reduce((acc, r) => {
+      if (!r.isSession) return acc;
+      const m = machineMap[r.machineId];
+      const rate = r.exchangeRate ?? m?.exchangeRate ?? 4;
+      const cash = Number(r.totalInvestment ?? r.investment) || 0;
+      const startBalls = Number(r.startBalls) || 0;
+      const endBalls = Number(r.endBalls) || 0;
+      return acc + (endBalls - startBalls) * rate - cash;
+    }, 0);
+  }, [records, machineMap]);
+
   if (records.length === 0) {
     return (
       <div className="p-8 text-center text-slate-500 dark:text-slate-400">
@@ -26,7 +39,7 @@ export default function RecordList({ records, machines, onDelete }) {
     <div className="p-4 space-y-4">
       <div className="bg-slate-800 text-white rounded-lg p-4 space-y-2">
         <h2 className="font-bold">合計</h2>
-        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+        <div className="grid grid-cols-2 gap-2 text-center text-sm">
           <div>
             <div className="text-slate-300 text-xs">投資額</div>
             <div className="font-semibold">¥{summary.totalInvestment.toLocaleString()}</div>
@@ -41,21 +54,34 @@ export default function RecordList({ records, machines, onDelete }) {
               {summary.totalExpectedValue >= 0 ? '+' : ''}¥{summary.totalExpectedValue.toLocaleString()}
             </div>
           </div>
+          <div>
+            <div className="text-slate-300 text-xs">収支合計</div>
+            <div className={`font-semibold ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {totalProfit >= 0 ? '+' : ''}¥{Math.round(totalProfit).toLocaleString()}
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="space-y-2">
         {sorted.map((r) => {
           const machine = machineMap[r.machineId];
-          const ev = machine
-            ? calcExpectedValue({
+          const ev = !machine
+            ? 0
+            : r.isSession
+            ? calcSessionExpectedValue(r, machine)
+            : calcExpectedValue({
                 totalRotations: r.rotations,
                 investment: r.investment,
                 machine,
-              })
-            : 0;
+              });
           const perK = rotationsPer1K(r.rotations, r.investment);
-          const border = machine ? calcBorder(machine) : 0;
+          const exRate = r.exchangeRate ?? machine?.exchangeRate ?? 4;
+          const border = machine ? calcBorder({ ...machine, exchangeRate: exRate }) : 0;
+          const cashInv = Number(r.totalInvestment ?? r.investment) || 0;
+          const profit = r.isSession
+            ? ((Number(r.endBalls) || 0) - (Number(r.startBalls) || 0)) * exRate - cashInv
+            : null;
           return (
             <div
               key={r.id}
@@ -85,6 +111,11 @@ export default function RecordList({ records, machines, onDelete }) {
                 <div className={`font-semibold ${ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   期待値: {ev >= 0 ? '+' : ''}¥{ev.toLocaleString()}
                 </div>
+                {profit !== null && (
+                  <div className={`col-span-2 font-semibold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    収支: {profit >= 0 ? '+' : ''}¥{Math.round(profit).toLocaleString()}
+                  </div>
+                )}
               </div>
               {r.isSession && (
                 <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded px-2 py-1">
