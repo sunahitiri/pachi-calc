@@ -6,10 +6,13 @@ export default function MachineManager({ machines, setMachines }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
+  const [dragDy, setDragDy] = useState(0); // 指の Y 方向移動量 (px)
   const pressTimerRef = useRef(null);
   const pressPosRef = useRef(null);
   const cardRefs = useRef({});
   const listRef = useRef(null);
+  // ドラッグ開始時のメタ情報: 元のインデックス / 指の開始Y / カード高さ+ギャップ
+  const dragInfoRef = useRef(null);
 
   // ドラッグ中はブラウザのスクロールを抑止する必要があるが、
   // React の合成イベントは passive なので preventDefault() が効かない。
@@ -133,8 +136,15 @@ export default function MachineManager({ machines, setMachines }) {
     try {
       target.setPointerCapture(e.pointerId);
     } catch { /* noop */ }
+    const startY = e.clientY;
     pressTimerRef.current = setTimeout(() => {
+      const originIdx = machines.findIndex((m) => m.id === id);
+      const cardEl = cardRefs.current[id];
+      // 1 スロット分の縦移動量 = カード高さ + space-y-2 の 8px
+      const cardFullH = cardEl ? cardEl.offsetHeight + 8 : 80;
+      dragInfoRef.current = { originIdx, startY, cardFullH };
       setDraggingId(id);
+      setDragDy(0);
       pressTimerRef.current = null;
       if (navigator.vibrate) navigator.vibrate(30);
     }, LONG_PRESS_MS);
@@ -147,12 +157,16 @@ export default function MachineManager({ machines, setMachines }) {
       const dy = e.clientY - pressPosRef.current.y;
       if (Math.hypot(dx, dy) > MOVE_CANCEL_PX) cancelPress();
     }
-    if (!draggingId) return;
+    if (!draggingId || !dragInfoRef.current) return;
     e.preventDefault();
+    // 指の移動量を反映 (カードの translateY に使用)
+    setDragDy(e.clientY - dragInfoRef.current.startY);
+
     const fromIdx = machines.findIndex((m) => m.id === draggingId);
     if (fromIdx < 0) return;
     let toIdx = fromIdx;
     for (let i = 0; i < machines.length; i++) {
+      if (machines[i].id === draggingId) continue;
       const el = cardRefs.current[machines[i].id];
       if (!el) continue;
       const r = el.getBoundingClientRect();
@@ -171,6 +185,8 @@ export default function MachineManager({ machines, setMachines }) {
   const handleCardPointerUp = () => {
     cancelPress();
     setDraggingId(null);
+    setDragDy(0);
+    dragInfoRef.current = null;
   };
 
   const handleDmmPaste = () => {
@@ -365,9 +381,20 @@ export default function MachineManager({ machines, setMachines }) {
       )}
 
       <div ref={listRef} className="space-y-2">
-        {machines.map((m) => {
+        {machines.map((m, i) => {
           const border = calcBorder(m);
           const isDragging = draggingId === m.id;
+          // ドラッグ中のカードを指に追従させる:
+          //   DOM 上での移動量 = (現在の index - 元の index) * カード高さ
+          //   translateY = 指の移動量 - DOM 上での移動量
+          // ⇒ カードの見た目の位置は常に指の位置に一致する。
+          let transform;
+          if (isDragging && dragInfoRef.current) {
+            const info = dragInfoRef.current;
+            const domOffset = (i - info.originIdx) * info.cardFullH;
+            const ty = dragDy - domOffset;
+            transform = `translate3d(0, ${ty}px, 0) scale(1.03)`;
+          }
           return (
             <div
               key={m.id}
@@ -384,10 +411,17 @@ export default function MachineManager({ machines, setMachines }) {
                 if (!draggingId) cancelPress();
                 else e.preventDefault();
               }}
-              style={{ touchAction: draggingId ? 'none' : 'auto' }}
-              className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm transition-shadow select-none ${
+              style={{
+                touchAction: draggingId ? 'none' : 'auto',
+                transform,
+                zIndex: isDragging ? 20 : undefined,
+                // ドラッグ中は追従のため transition を切る / 離したら位置への snap を滑らかに
+                transition: isDragging ? 'none' : 'transform 220ms ease-out, box-shadow 150ms',
+                position: 'relative',
+              }}
+              className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm select-none ${
                 isDragging
-                  ? 'border-blue-500 ring-2 ring-blue-400 shadow-lg opacity-90 scale-[1.02] cursor-grabbing'
+                  ? 'border-blue-500 ring-2 ring-blue-400 shadow-xl cursor-grabbing'
                   : 'border-slate-200 dark:border-slate-700'
               }`}
             >
