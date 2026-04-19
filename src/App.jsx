@@ -49,13 +49,13 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 max-w-lg mx-auto">
+    <div
+      className="min-h-screen bg-slate-50 dark:bg-slate-900 max-w-lg mx-auto"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <Header tab={tab} setTab={setTab} />
-      <main
-        className="pb-8"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
+      <main className="pb-8">
         {tab === 'record' && <SessionRecorder machines={machines} onComplete={handleAdd} />}
         {tab === 'list' && (
           <RecordList records={records} machines={machines} onDelete={handleDelete} />

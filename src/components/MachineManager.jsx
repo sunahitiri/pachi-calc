@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { calcBorder } from '../utils/calculations';
 import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
 
@@ -9,6 +9,20 @@ export default function MachineManager({ machines, setMachines }) {
   const pressTimerRef = useRef(null);
   const pressPosRef = useRef(null);
   const cardRefs = useRef({});
+  const listRef = useRef(null);
+
+  // ドラッグ中はブラウザのスクロールを抑止する必要があるが、
+  // React の合成イベントは passive なので preventDefault() が効かない。
+  // 非 passive のネイティブ touchmove リスナーを直接アタッチする。
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onTouchMove = (e) => {
+      if (draggingId && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onTouchMove);
+  }, [draggingId]);
   const [form, setForm] = useState({
     name: '',
     probability: '',
@@ -350,7 +364,7 @@ export default function MachineManager({ machines, setMachines }) {
         </form>
       )}
 
-      <div className="space-y-2">
+      <div ref={listRef} className="space-y-2">
         {machines.map((m) => {
           const border = calcBorder(m);
           const isDragging = draggingId === m.id;
