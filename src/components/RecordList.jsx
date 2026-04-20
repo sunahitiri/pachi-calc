@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { calcExpectedValue, calcSessionExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
 import SessionDetail from './SessionDetail';
 
@@ -111,6 +111,17 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
     () => records.find((r) => r.id === editingId) || null,
     [records, editingId]
   );
+  // 編集中のドラフト (保存/キャンセルで確定/破棄)
+  const [draft, setDraft] = useState(null);
+  useEffect(() => {
+    // 別の記録を開いたときだけドラフトを初期化 (編集中の再レンダーでは上書きしない)
+    if (editingId) {
+      setDraft((prev) => (prev && prev.id === editingId ? prev : editingRecord));
+    } else {
+      setDraft(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId]);
 
   const summary = useMemo(() => summarize(records, machines), [records, machines]);
   const totalProfit = useMemo(() => computeProfit(records, machineMap), [records, machineMap]);
@@ -185,52 +196,67 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
   };
 
   // ===== 編集ビュー =====
-  if (editingRecord) {
-    const machine = machineMap[editingRecord.machineId];
-    const exRate = editingRecord.exchangeRate ?? machine?.exchangeRate ?? 4;
-    const cashInv = Number(editingRecord.totalInvestment ?? editingRecord.investment) || 0;
-    const startBalls = Number(editingRecord.startBalls) || 0;
-    const endBalls = Number(editingRecord.endBalls) || 0;
-    const profit = editingRecord.isSession
+  if (editingRecord && draft) {
+    const machine = machineMap[draft.machineId];
+    const exRate = draft.exchangeRate ?? machine?.exchangeRate ?? 4;
+    const cashInv = Number(draft.totalInvestment ?? draft.investment) || 0;
+    const startBalls = Number(draft.startBalls) || 0;
+    const endBalls = Number(draft.endBalls) || 0;
+    const profit = draft.isSession
       ? (endBalls - startBalls) * exRate - cashInv
       : 0;
     const ev = !machine
       ? 0
-      : editingRecord.isSession
-      ? calcSessionExpectedValue(editingRecord, machine)
+      : draft.isSession
+      ? calcSessionExpectedValue(draft, machine)
       : calcExpectedValue({
-          totalRotations: editingRecord.rotations,
-          investment: editingRecord.investment,
+          totalRotations: draft.rotations,
+          investment: draft.investment,
           machine,
         });
     // 1Kあたり回転数は常に 1玉=4円 換算。持ち玉で回した分も 4円 として投資額に含める。
     //   投資相当額(円) = 現金 + (startBalls + hitPayout − endBalls) × 4
-    const hitPayout = (editingRecord.hits || []).reduce(
+    const hitPayout = (draft.hits || []).reduce(
       (s, h) => s + (Number(h.ballsGained) || 0),
       0
     );
     const stockConsumed = startBalls + hitPayout - endBalls; // 持ち玉の純消費玉数
     const effectiveInv4yen = Math.max(0, cashInv + stockConsumed * 4);
-    const perK = rotationsPer1K(editingRecord.rotations, effectiveInv4yen);
+    const perK = rotationsPer1K(draft.rotations, effectiveInv4yen);
     const border = machine ? calcBorder({ ...machine, exchangeRate: exRate }) : 0;
+
+    // ドラフトと元記録の差分判定 (浅い JSON 比較で十分)
+    const isDirty = JSON.stringify(draft) !== JSON.stringify(editingRecord);
+    const closeEdit = () => {
+      setEditingId(null);
+      setDraft(null);
+    };
+    const handleSave = () => {
+      onUpdate?.(draft);
+      closeEdit();
+    };
+    const handleCancel = () => {
+      if (isDirty && !confirm('編集内容を破棄しますか？')) return;
+      closeEdit();
+    };
 
     return (
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setEditingId(null)}
+            onClick={handleCancel}
             className="text-slate-600 dark:text-slate-300 text-sm px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
           >
             ← 戻る
           </button>
           <h2 className="font-bold text-slate-900 dark:text-white flex-1">
-            {editingRecord.date} {machine?.name ?? '（削除済み機種）'}
+            {draft.date} {machine?.name ?? '（削除済み機種）'}
           </h2>
           <button
             onClick={() => {
               if (confirm('この記録を削除しますか？')) {
-                onDelete(editingRecord.id);
-                setEditingId(null);
+                onDelete(draft.id);
+                closeEdit();
               }
             }}
             className="text-red-500 text-sm px-2 py-1"
@@ -239,15 +265,15 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
           </button>
         </div>
 
-        {editingRecord.isSession ? (
+        {draft.isSession ? (
           <SessionDetail
-            session={editingRecord}
+            session={draft}
             machines={machines}
             includeEndRow
-            onChange={(updated) => onUpdate?.(updated)}
+            onChange={(updated) => setDraft(updated)}
             onDeleteHit={(idx) => {
-              const newHits = (editingRecord.hits || []).filter((_, i) => i !== idx);
-              onUpdate?.({ ...editingRecord, hits: newHits });
+              const newHits = (draft.hits || []).filter((_, i) => i !== idx);
+              setDraft({ ...draft, hits: newHits });
             }}
           />
         ) : (
@@ -256,12 +282,12 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
           </div>
         )}
 
-        {/* サマリ (リアルタイム) */}
+        {/* サマリ (ドラフトベース) */}
         <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 space-y-1 text-sm">
           <div className="flex justify-between">
             <span className="text-slate-600 dark:text-slate-300">累計回転</span>
             <span className="font-semibold text-slate-900 dark:text-white">
-              {(editingRecord.rotations || 0).toLocaleString()} 回
+              {(draft.rotations || 0).toLocaleString()} 回
             </span>
           </div>
           <div className="flex justify-between">
@@ -286,7 +312,7 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
               {formatSignedYen(ev)}
             </span>
           </div>
-          {editingRecord.isSession && (
+          {draft.isSession && (
             <div className="flex justify-between">
               <span className="text-slate-600 dark:text-slate-300">収支</span>
               <span
@@ -302,8 +328,21 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
           )}
         </div>
 
-        <div className="text-xs text-slate-500 dark:text-slate-400 bg-yellow-50 dark:bg-yellow-900/20 rounded p-2">
-          💡 各項目を編集すると自動的に保存されます。
+        {/* 保存 / キャンセル */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={handleCancel}
+            className="bg-slate-300 dark:bg-slate-600 dark:text-white py-2 rounded-lg font-medium text-sm"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!isDirty}
+            className="bg-blue-600 text-white py-2 rounded-lg font-medium text-sm disabled:opacity-50"
+          >
+            保存
+          </button>
         </div>
       </div>
     );

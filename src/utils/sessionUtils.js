@@ -13,6 +13,14 @@
 
 const BALL_VALUE = 4; // 1玉 = 4円
 
+// `Number(x) || fallback` は 0 を falsy 扱いしてしまい、ユーザーが 0 を入力しても
+// fallback に戻されて「編集が効かない」状態になる。空/NaN のときだけ fallback に落ちる版。
+function numOrFallback(v, fallback) {
+  if (v === null || v === undefined || v === '') return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export function sumHitBallsGained(hits) {
   return (hits || []).reduce((s, h) => s + (Number(h.ballsGained) || 0), 0);
 }
@@ -29,8 +37,8 @@ function cumulativeInvestment(totalInvestment, startBalls, endBalls, hitBallsGai
 export function recalcSession(session) {
   if (!session) return session;
 
-  const startRotations = Math.max(0, Number(session.startRotations) || 0);
-  const startBalls = Math.max(0, Number(session.startBalls) || 0);
+  const startRotations = Math.max(0, numOrFallback(session.startRotations, 0));
+  const startBalls = Math.max(0, numOrFallback(session.startBalls, 0));
 
   const hits = [];
   let prevResume = startRotations;
@@ -38,13 +46,10 @@ export function recalcSession(session) {
   let cumulative = 0;
 
   for (const h of session.hits || []) {
-    const atMachineRot = Math.max(prevResume, Number(h.atMachineRot) || prevResume);
-    const resumeMachineRot = Math.max(
-      0,
-      h.resumeMachineRot != null ? Number(h.resumeMachineRot) : 0
-    );
-    const ballsAfter = Math.max(0, Number(h.ballsAfter) || 0);
-    const addedInvestment = Math.max(0, Number(h.addedInvestment) || 0);
+    const atMachineRot = Math.max(prevResume, numOrFallback(h.atMachineRot, prevResume));
+    const resumeMachineRot = Math.max(0, numOrFallback(h.resumeMachineRot, 0));
+    const ballsAfter = Math.max(0, numOrFallback(h.ballsAfter, 0));
+    const addedInvestment = Math.max(0, numOrFallback(h.addedInvestment, 0));
 
     const segmentRot = Math.max(0, atMachineRot - prevResume);
     cumulative += segmentRot;
@@ -84,13 +89,13 @@ export function recalcSession(session) {
 
   const endRot = Math.max(
     prevResume,
-    Number(session.endRotations ?? session.currentRotations) || prevResume
+    numOrFallback(session.endRotations ?? session.currentRotations, prevResume)
   );
   const endBalls = Math.max(
     0,
-    Number(session.endBalls ?? session.currentBalls) || prevBalls
+    numOrFallback(session.endBalls ?? session.currentBalls, prevBalls)
   );
-  const totalInvestment = Math.max(0, Number(session.totalInvestment) || 0);
+  const totalInvestment = Math.max(0, numOrFallback(session.totalInvestment, 0));
 
   const currentSegRot = Math.max(0, endRot - prevResume);
   const totalRot = cumulative + currentSegRot;

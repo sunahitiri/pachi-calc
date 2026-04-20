@@ -26,11 +26,11 @@ export default function MachineManager({ machines, setMachines }) {
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     return () => el.removeEventListener('touchmove', onTouchMove);
   }, [draggingId]);
+  // 機種登録は常に 1玉=4円 基準。交換率は遊戯開始時にセッション側で選択する。
   const [form, setForm] = useState({
     name: '',
     probability: '',
     averagePayout: '',
-    exchangeRate: '4',
     notes: '',
   });
 
@@ -43,7 +43,7 @@ export default function MachineManager({ machines, setMachines }) {
   const [dmmHtml, setDmmHtml] = useState('');
 
   const resetForm = () => {
-    setForm({ name: '', probability: '', averagePayout: '', exchangeRate: '4', notes: '' });
+    setForm({ name: '', probability: '', averagePayout: '', notes: '' });
     setEditing(null);
     setShowForm(false);
     setDmmError('');
@@ -56,7 +56,6 @@ export default function MachineManager({ machines, setMachines }) {
       name: spec.name,
       probability: spec.probability.toString(),
       averagePayout: spec.averagePayout.toString(),
-      exchangeRate: spec.exchangeRate.toString(),
       notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
     });
     setEditing(null);
@@ -65,14 +64,14 @@ export default function MachineManager({ machines, setMachines }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.name || !form.probability || !form.averagePayout || !form.exchangeRate) return;
+    if (!form.name || !form.probability || !form.averagePayout) return;
     const data = {
       id: editing?.id || `custom-${Date.now()}`,
       name: form.name,
       category: 'パチンコ',
       probability: Number(form.probability),
       averagePayout: Number(form.averagePayout),
-      exchangeRate: Number(form.exchangeRate),
+      exchangeRate: 4, // 機種情報は常に 1玉=4円 基準で保存
       notes: form.notes,
     };
     if (editing) {
@@ -89,7 +88,6 @@ export default function MachineManager({ machines, setMachines }) {
       name: m.name,
       probability: m.probability?.toString() || '',
       averagePayout: m.averagePayout?.toString() || '',
-      exchangeRate: m.exchangeRate?.toString() || '4',
       notes: m.notes || '',
     });
     setShowForm(true);
@@ -340,20 +338,6 @@ export default function MachineManager({ machines, setMachines }) {
               className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
               required
             />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">交換率（円/玉）</label>
-            <select
-              value={form.exchangeRate}
-              onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })}
-              className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
-            >
-              <option value="4">4.00（等価）</option>
-              <option value="3.57">3.57（28個交換）</option>
-              <option value="3.33">3.33（30個交換）</option>
-              <option value="2.5">2.50（2.5円パチ）</option>
-              <option value="1">1.00（1円パチ）</option>
-            </select>
           </div>
           <input
             type="text"

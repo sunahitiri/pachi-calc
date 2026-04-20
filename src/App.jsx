@@ -33,12 +33,9 @@ function App() {
   };
 
   // --- 指に追随するタブ切替 (iPhone ホーム画面風) ---
+  // 画面のどこでもスワイプでタブ切替できるよう、入力要素/ボタン上でも検出する。
+  // 通常のタップ・縦スクロール・横スワイプは handleTouchMove 内の 8px 方向ロックで区別する。
   const handleTouchStart = (e) => {
-    // 入力要素/ボタン上のタッチは無視 (通常操作と競合させない)
-    if (e.target.closest && e.target.closest('input,textarea,select,button,label')) {
-      touchRef.current = null;
-      return;
-    }
     const t = e.touches[0];
     touchRef.current = {
       x: t.clientX,
@@ -73,7 +70,7 @@ function App() {
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e) => {
     if (!touchRef.current) return;
     const { locked, t: startTime, width } = touchRef.current;
     touchRef.current = null;
@@ -83,6 +80,9 @@ function App() {
       setIsDragging(false);
       return;
     }
+    // 横スワイプが成立したときは、指を離したタイミングで発火する click を抑止
+    // (入力欄の上からスワイプを始めてボタンの上で離した際の誤押下を防ぐ)
+    if (e && e.cancelable) e.preventDefault();
 
     const duration = Math.max(1, Date.now() - startTime);
     const velocity = dragDx / duration; // px/ms

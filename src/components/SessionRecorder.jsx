@@ -141,7 +141,21 @@ export default function SessionRecorder({ machines, onComplete }) {
   const [curRotInput, setCurRotInput] = useState('');
   const [curBallsInput, setCurBallsInput] = useState('');
   const [addInvInput, setAddInvInput] = useState('');
-  const [showDetail, setShowDetail] = useState(false);
+  // 遊戯詳細の編集ドラフト (null = 閉じている)
+  const [detailDraft, setDetailDraft] = useState(null);
+  const showDetail = detailDraft !== null;
+  const openDetail = () => setDetailDraft(session);
+  const closeDetail = () => setDetailDraft(null);
+  const isDetailDirty =
+    detailDraft !== null && JSON.stringify(detailDraft) !== JSON.stringify(session);
+  const saveDetail = () => {
+    if (detailDraft) setSession(detailDraft);
+    closeDetail();
+  };
+  const cancelDetail = () => {
+    if (isDetailDirty && !confirm('編集内容を破棄しますか？')) return;
+    closeDetail();
+  };
 
   // 遊戯セッション切替時に入力欄を同期
   useEffect(() => {
@@ -664,22 +678,39 @@ export default function SessionRecorder({ machines, onComplete }) {
       </div>
 
       <button
-        onClick={() => setShowDetail((v) => !v)}
+        onClick={() => (showDetail ? cancelDetail() : openDetail())}
         className="w-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 py-2 rounded-lg font-medium text-sm hover:bg-slate-300 dark:hover:bg-slate-600"
       >
         {showDetail ? '▾ 遊戯詳細を閉じる' : '▸ 遊戯詳細を表示'}
       </button>
 
-      {showDetail && (
-        <SessionDetail
-          session={session}
-          machines={machines}
-          onChange={(updated) => setSession(updated)}
-          onDeleteHit={(idx) => {
-            const newHits = session.hits.filter((_, i) => i !== idx);
-            setSession({ ...session, hits: newHits });
-          }}
-        />
+      {showDetail && detailDraft && (
+        <>
+          <SessionDetail
+            session={detailDraft}
+            machines={machines}
+            onChange={(updated) => setDetailDraft(updated)}
+            onDeleteHit={(idx) => {
+              const newHits = (detailDraft.hits || []).filter((_, i) => i !== idx);
+              setDetailDraft({ ...detailDraft, hits: newHits });
+            }}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={cancelDetail}
+              className="bg-slate-300 dark:bg-slate-600 dark:text-white py-2 rounded-lg font-medium text-sm"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={saveDetail}
+              disabled={!isDetailDirty}
+              className="bg-blue-600 text-white py-2 rounded-lg font-medium text-sm disabled:opacity-50"
+            >
+              保存
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
