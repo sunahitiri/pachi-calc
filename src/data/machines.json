@@ -4,171 +4,171 @@
     "name": "eリコリス・リコイル",
     "category": "パチンコ",
     "probability": 259.7,
-    "averagePayout": 1500,
+    "averagePayout": 3791,
     "exchangeRate": 4,
-    "notes": "ニューギン / DMM人気1位 ※出玉はサンプル値・要確認"
+    "notes": "ニューギン"
   },
   {
     "id": "e-ragnador",
     "name": "eラグナドール 妖しき皇帝と終焉の夜叉姫",
     "category": "パチンコ",
     "probability": 239.5,
-    "averagePayout": 1400,
+    "averagePayout": 5059,
     "exchangeRate": 4,
-    "notes": "メーシー ※出玉はサンプル値・要確認"
+    "notes": "メーシー"
   },
   {
     "id": "e-kinnikuman",
     "name": "eフィーバーキン肉マン",
     "category": "パチンコ",
     "probability": 399.9,
-    "averagePayout": 2000,
+    "averagePayout": 5275,
     "exchangeRate": 4,
-    "notes": "SANKYO ※出玉はサンプル値・要確認"
+    "notes": "SANKYO"
   },
   {
     "id": "e-tensura-2",
     "name": "e転生したらスライムだった件2",
     "category": "パチンコ",
     "probability": 399.9,
-    "averagePayout": 2000,
+    "averagePayout": 5816,
     "exchangeRate": 4,
-    "notes": "サンセイR&D ※出玉はサンプル値・要確認"
+    "notes": "サンセイR&D"
   },
   {
     "id": "e-eva-hajimari",
     "name": "e新世紀エヴァンゲリオン 〜はじまりの記憶〜",
     "category": "パチンコ",
     "probability": 399.9,
-    "averagePayout": 2000,
+    "averagePayout": 5987,
     "exchangeRate": 4,
-    "notes": "ビスティ ※出玉はサンプル値・要確認"
+    "notes": "ビスティ"
   },
   {
     "id": "e-tokyo-ghoul",
     "name": "e東京喰種",
     "category": "パチンコ",
     "probability": 399,
-    "averagePayout": 1800,
+    "averagePayout": 2998,
     "exchangeRate": 4,
-    "notes": "ビスティ ※出玉はサンプル値・要確認"
+    "notes": "ビスティ"
   },
   {
     "id": "e-86",
     "name": "e86-エイティシックス-",
     "category": "パチンコ",
     "probability": 239.1,
-    "averagePayout": 1300,
+    "averagePayout": 2931,
     "exchangeRate": 4,
-    "notes": "アムテックス ※出玉はサンプル値・要確認"
+    "notes": "アムテックス"
   },
   {
     "id": "e-ring-saikyou",
     "name": "eリング 最恐領域",
     "category": "パチンコ",
     "probability": 399,
-    "averagePayout": 1800,
+    "averagePayout": 5010,
     "exchangeRate": 4,
-    "notes": "オレンジ ※出玉はサンプル値・要確認"
+    "notes": "オレンジ"
   },
   {
     "id": "e-koutetsujou-kabaneri-2",
     "name": "e甲鉄城のカバネリ2 咲かせや燦然",
     "category": "パチンコ",
     "probability": 319.7,
-    "averagePayout": 1600,
+    "averagePayout": 4684,
     "exchangeRate": 4,
-    "notes": "サミー ※出玉はサンプル値・要確認"
+    "notes": "サミー"
   },
   {
     "id": "e-shuumatsu-valkyrie",
     "name": "e終末のワルキューレ",
     "category": "パチンコ",
     "probability": 219.9,
-    "averagePayout": 1200,
+    "averagePayout": 3238,
     "exchangeRate": 4,
-    "notes": "サミー ※出玉はサンプル値・要確認"
+    "notes": "サミー"
   },
   {
     "id": "e-madoka-3",
     "name": "e魔法少女まどか☆マギカ3 時間遡行〜始まりの願い〜",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1600,
+    "probability": 319.9,
+    "averagePayout": 3969,
     "exchangeRate": 4,
-    "notes": "京楽 ※サンプル値・要確認"
+    "notes": "京楽"
   },
   {
     "id": "e-megami-cafe-terrace",
     "name": "e女神のカフェテラス",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1600,
+    "probability": 399,
+    "averagePayout": 3618,
     "exchangeRate": 4,
-    "notes": "※サンプル値・要確認"
+    "notes": "平和"
   },
   {
     "id": "e-garo-12",
     "name": "e牙狼12 黄金騎士極限",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1600,
+    "probability": 349.99,
+    "averagePayout": 5114,
     "exchangeRate": 4,
-    "notes": "※サンプル値・要確認"
+    "notes": "サンセイR&D"
   },
   {
     "id": "eva-mirai-no-houkou",
     "name": "新世紀エヴァンゲリオン〜未来への咆哮〜",
     "category": "パチンコ",
     "probability": 319.7,
-    "averagePayout": 1600,
+    "averagePayout": 4498,
     "exchangeRate": 4,
-    "notes": "※サンプル値・要確認"
+    "notes": "ビスティ"
   },
   {
     "id": "e-hokuto-11",
     "name": "e北斗の拳11 暴凶星",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1600,
+    "probability": 399.8,
+    "averagePayout": 5951,
     "exchangeRate": 4,
-    "notes": "サミー ※サンプル値・要確認"
+    "notes": "サミー"
   },
   {
     "id": "p-ultraman-mebius-319",
     "name": "Pウルトラマンメビウス デカヘソ319",
     "category": "パチンコ",
-    "probability": 319,
-    "averagePayout": 1600,
+    "probability": 319.9,
+    "averagePayout": 2599,
     "exchangeRate": 4,
-    "notes": "※サンプル値・要確認"
+    "notes": "京楽"
   },
   {
     "id": "p-rezero-s2-129",
     "name": "PRe:ゼロから始める異世界生活 season2 129ver.",
     "category": "パチンコ",
-    "probability": 129,
-    "averagePayout": 700,
+    "probability": 129.9,
+    "averagePayout": 2021,
     "exchangeRate": 4,
-    "notes": "甘デジ ※サンプル値・要確認"
+    "notes": "ビスティ 甘デジ"
   },
   {
     "id": "e-fever-mononogatari",
     "name": "eフィーバーもののがたり",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1600,
+    "probability": 149.9,
+    "averagePayout": 2226,
     "exchangeRate": 4,
-    "notes": "SANKYO ※サンプル値・要確認"
+    "notes": "SANKYO"
   },
   {
     "id": "e-kakegurui-7500",
     "name": "eカケグルイ 7500ver",
     "category": "パチンコ",
-    "probability": 319.7,
-    "averagePayout": 1500,
+    "probability": 204,
+    "averagePayout": 0,
     "exchangeRate": 4,
-    "notes": "※サンプル値・要確認"
+    "notes": "DMMサイト情報準備中"
   },
   {
     "id": "e-rezero-2",
@@ -177,6 +177,6 @@
     "probability": 349.9,
     "averagePayout": 5282,
     "exchangeRate": 4,
-    "notes": "ボーダー約16.6回/1K (4円等価) / DMM出典"
+    "notes": "ビスティ"
   }
 ]
