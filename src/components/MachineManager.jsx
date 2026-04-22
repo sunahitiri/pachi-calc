@@ -413,13 +413,11 @@ export default function MachineManager({ machines, setMachines }) {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円
-                  </div>
-                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 flex gap-3 flex-wrap">
-                    <span>ボーダー: {border.toFixed(2)} 回/1K</span>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
+                    <span>1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円</span>
+                    <span className="text-blue-600 dark:text-blue-400">B:{border.toFixed(1)}</span>
                     {hourlyBorder > 0 && (
-                      <span>時給1000円ボーダー: {hourlyBorder.toFixed(2)} 回/1K</span>
+                      <span className="text-blue-600 dark:text-blue-400">時給1K:{hourlyBorder.toFixed(1)}</span>
                     )}
                   </div>
                   {m.notes && (
