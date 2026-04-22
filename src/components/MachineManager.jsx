@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { calcBorder } from '../utils/calculations';
+import { calcBorder, calcHourlyBorder } from '../utils/calculations';
 import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
 
 export default function MachineManager({ machines, setMachines }) {
@@ -367,6 +367,7 @@ export default function MachineManager({ machines, setMachines }) {
       <div ref={listRef} className="space-y-2">
         {machines.map((m, i) => {
           const border = calcBorder(m);
+          const hourlyBorder = calcHourlyBorder(m);
           const isDragging = draggingId === m.id;
           // ドラッグ中のカードを指に追従させる:
           //   DOM 上での移動量 = (現在の index - 元の index) * カード高さ
@@ -415,8 +416,11 @@ export default function MachineManager({ machines, setMachines }) {
                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円
                   </div>
-                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
-                    ボーダー: {border.toFixed(2)} 回/1K
+                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 flex gap-3 flex-wrap">
+                    <span>ボーダー: {border.toFixed(2)} 回/1K</span>
+                    {hourlyBorder > 0 && (
+                      <span>時給1000円ボーダー: {hourlyBorder.toFixed(2)} 回/1K</span>
+                    )}
                   </div>
                   {m.notes && (
                     <div className="text-xs text-slate-400 mt-0.5">{m.notes}</div>
