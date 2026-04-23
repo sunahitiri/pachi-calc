@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { calcBorder } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import SessionDetail from './SessionDetail';
+import MachineSelector from './MachineSelector';
 
 const BALL_VALUE = 4; // 1玉 = 4円 (玉貸しレート)
 
@@ -361,22 +362,13 @@ export default function SessionRecorder({ machines, onComplete }) {
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">機種</label>
-          <select
+          <MachineSelector
+            machines={machines}
             value={startMachineId}
-            onChange={(e) => setStartMachineId(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-          >
-            <option value="">選択してください</option>
-            {machines.map((m) => {
-              const rate = (EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0]).rate;
-              const b = calcBorder({ ...m, exchangeRate: rate });
-              return (
-                <option key={m.id} value={m.id}>
-                  {m.name}（ボーダー{b.toFixed(1)}）
-                </option>
-              );
-            })}
-          </select>
+            onChange={setStartMachineId}
+            exchangeRate={(EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0]).rate}
+            placeholder="選択してください"
+          />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>

@@ -36,6 +36,12 @@ function App() {
   // 画面のどこでもスワイプでタブ切替できるよう、入力要素/ボタン上でも検出する。
   // 通常のタップ・縦スクロール・横スワイプは handleTouchMove 内の 8px 方向ロックで区別する。
   const handleTouchStart = (e) => {
+    // モーダル/ダイアログ内のタッチはタブ切替の対象外
+    // (機種選択ダイアログ等で項目タップが横スワイプと誤判定されるのを防ぐ)
+    if (e.target && e.target.closest && e.target.closest('[role="dialog"], [data-no-swipe]')) {
+      touchRef.current = null;
+      return;
+    }
     const t = e.touches[0];
     touchRef.current = {
       x: t.clientX,
