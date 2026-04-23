@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { calcBorder } from '../utils/calculations';
 
 /**
@@ -71,7 +72,7 @@ export default function MachineSelector({
         <span aria-hidden className="text-slate-400 shrink-0">▾</span>
       </button>
 
-      {isOpen && (
+      {isOpen && createPortal(
         <>
           <div
             className="fixed inset-0 bg-black/30 z-40"
@@ -135,7 +136,8 @@ export default function MachineSelector({
               )}
             </ul>
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </>
   );
