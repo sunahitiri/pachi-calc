@@ -36,6 +36,15 @@ export function calcBorder(machine) {
   return 1000 / income;
 }
 
+// 時給1000円ボーダー: 200回転あたり期待値1000円を達成するための回転数/1K
+// 200 × (income/rot - 1000/R) = 1000  ⇒  R = 1000 / (income/rot - 5)
+export function calcHourlyBorder(machine) {
+  if (!machine) return 0;
+  const income = (1 / machine.probability) * machine.averagePayout * machine.exchangeRate;
+  if (income <= 5) return 0;
+  return 1000 / (income - 5);
+}
+
 // 総期待値(円)
 export function calcExpectedValue({ totalRotations, investment, machine }) {
   if (!machine || !totalRotations || !investment) return 0;
