@@ -90,7 +90,7 @@ export default function MachineManager({ machines, setMachines }) {
       averagePayout: m.averagePayout?.toString() || '',
       notes: m.notes || '',
     });
-    setShowForm(true);
+    setShowForm(false); // 新規追加フォームは閉じる
   };
 
   const handleDelete = (id) => {
@@ -306,7 +306,7 @@ export default function MachineManager({ machines, setMachines }) {
         </div>
       )}
 
-      {showForm && (
+      {showForm && !editing && (
         <form onSubmit={handleSubmit} className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg space-y-2 border border-slate-200 dark:border-slate-700">
           <input
             type="text"
@@ -368,6 +368,7 @@ export default function MachineManager({ machines, setMachines }) {
         {machines.map((m, i) => {
           const border = calcBorder(m);
           const hourlyBorder = calcHourlyBorder(m);
+          const isEditing = editing?.id === m.id;
           const isDragging = draggingId === m.id;
           // ドラッグ中のカードを指に追従させる:
           //   DOM 上での移動量 = (現在の index - 元の index) * カード高さ
@@ -381,66 +382,132 @@ export default function MachineManager({ machines, setMachines }) {
             transform = `translate3d(0, ${ty}px, 0) scale(1.03)`;
           }
           return (
-            <div
-              key={m.id}
-              ref={(el) => {
-                if (el) cardRefs.current[m.id] = el;
-                else delete cardRefs.current[m.id];
-              }}
-              onPointerDown={(e) => handleCardPointerDown(m.id, e)}
-              onPointerMove={handleCardPointerMove}
-              onPointerUp={handleCardPointerUp}
-              onPointerCancel={handleCardPointerUp}
-              onPointerLeave={(e) => {
-                // ドラッグ中以外は、要素外に出たら長押しタイマーをキャンセル
-                if (!draggingId) cancelPress();
-                else e.preventDefault();
-              }}
-              style={{
-                touchAction: draggingId ? 'none' : 'auto',
-                transform,
-                zIndex: isDragging ? 20 : undefined,
-                // ドラッグ中は追従のため transition を切る / 離したら位置への snap を滑らかに
-                transition: isDragging ? 'none' : 'transform 220ms ease-out, box-shadow 150ms',
-                position: 'relative',
-              }}
-              className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm select-none ${
-                isDragging
-                  ? 'border-blue-500 ring-2 ring-blue-400 shadow-xl cursor-grabbing'
-                  : 'border-slate-200 dark:border-slate-700'
-              }`}
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
-                    <span>1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円</span>
-                    <span className="text-blue-600 dark:text-blue-400">B:{border.toFixed(1)}</span>
-                    {hourlyBorder > 0 && (
-                      <span className="text-blue-600 dark:text-blue-400">時給1K:{hourlyBorder.toFixed(1)}</span>
+            <div key={m.id}>
+              {/* 機種カード */}
+              <div
+                ref={(el) => {
+                  if (el) cardRefs.current[m.id] = el;
+                  else delete cardRefs.current[m.id];
+                }}
+                onPointerDown={(e) => handleCardPointerDown(m.id, e)}
+                onPointerMove={handleCardPointerMove}
+                onPointerUp={handleCardPointerUp}
+                onPointerCancel={handleCardPointerUp}
+                onPointerLeave={(e) => {
+                  // ドラッグ中以外は、要素外に出たら長押しタイマーをキャンセル
+                  if (!draggingId) cancelPress();
+                  else e.preventDefault();
+                }}
+                style={{
+                  touchAction: draggingId ? 'none' : 'auto',
+                  transform,
+                  zIndex: isDragging ? 20 : undefined,
+                  // ドラッグ中は追従のため transition を切る / 離したら位置への snap を滑らかに
+                  transition: isDragging ? 'none' : 'transform 220ms ease-out, box-shadow 150ms',
+                  position: 'relative',
+                }}
+                className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm select-none ${
+                  isDragging
+                    ? 'border-blue-500 ring-2 ring-blue-400 shadow-xl cursor-grabbing'
+                    : isEditing
+                    ? 'border-blue-400 dark:border-blue-600'
+                    : 'border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
+                      <span>1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円</span>
+                      <span className="text-blue-600 dark:text-blue-400">B:{border.toFixed(1)}</span>
+                      {hourlyBorder > 0 && (
+                        <span className="text-blue-600 dark:text-blue-400">時給1K:{hourlyBorder.toFixed(1)}</span>
+                      )}
+                    </div>
+                    {m.notes && (
+                      <div className="text-xs text-slate-400 mt-0.5">{m.notes}</div>
                     )}
                   </div>
-                  {m.notes && (
-                    <div className="text-xs text-slate-400 mt-0.5">{m.notes}</div>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={() => handleEdit(m)}
-                    className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
-                  >
-                    編集
-                  </button>
-                  <button
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={() => handleDelete(m.id)}
-                    className="text-red-500 text-xs px-2 py-1"
-                  >
-                    削除
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => isEditing ? resetForm() : handleEdit(m)}
+                      className={`text-xs px-2 py-1 ${isEditing ? 'text-slate-500 dark:text-slate-400' : 'text-blue-600 dark:text-blue-400'}`}
+                    >
+                      {isEditing ? 'キャンセル' : '編集'}
+                    </button>
+                    <button
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => handleDelete(m.id)}
+                      className="text-red-500 text-xs px-2 py-1"
+                    >
+                      削除
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {/* インライン編集フォーム */}
+              {isEditing && (
+                <form
+                  onSubmit={handleSubmit}
+                  className="mt-1 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg space-y-2 border border-blue-300 dark:border-blue-700"
+                >
+                  <input
+                    type="text"
+                    placeholder="機種名"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                    required
+                  />
+                  <div>
+                    <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">初当たり確率の分母（例: 319.69）</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="319.69"
+                      value={form.probability}
+                      onChange={(e) => setForm({ ...form, probability: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">平均出玉（連チャン込み・1当たり）</label>
+                    <input
+                      type="number"
+                      placeholder="例: 1500"
+                      value={form.averagePayout}
+                      onChange={(e) => setForm({ ...form, averagePayout: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                      required
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="メモ"
+                    value={form.notes}
+                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="flex-1 bg-blue-600 text-white py-1.5 rounded text-sm font-medium"
+                    >
+                      更新
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="flex-1 bg-slate-300 dark:bg-slate-600 dark:text-white py-1.5 rounded text-sm font-medium"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           );
         })}
