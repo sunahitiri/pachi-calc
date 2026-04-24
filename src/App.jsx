@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react';
-import Header from './components/Header';
+import BottomNav from './components/BottomNav';
 import SessionRecorder from './components/SessionRecorder';
 import RecordList from './components/RecordList';
+import BalanceSheet from './components/BalanceSheet';
+import ProfitChart from './components/ProfitChart';
 import MachineManager from './components/MachineManager';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import defaultMachines from './data/machines.json';
 
-const TABS = ['record', 'list', 'machines'];
+const TABS = ['record', 'list', 'balance', 'chart', 'machines'];
 
 function App() {
   const [tab, setTab] = useState('record');
@@ -113,9 +115,22 @@ function App() {
     if (newIdx !== idx) setTab(TABS[newIdx]);
   };
 
+  const tabPanels = [
+    <SessionRecorder key="record" machines={machines} onComplete={handleAdd} />,
+    <RecordList
+      key="list"
+      records={records}
+      machines={machines}
+      onDelete={handleDelete}
+      onUpdate={handleUpdate}
+    />,
+    <BalanceSheet key="balance" records={records} machines={machines} />,
+    <ProfitChart key="chart" records={records} machines={machines} />,
+    <MachineManager key="machines" machines={machines} setMachines={setMachines} />,
+  ];
+
   return (
     <div className="h-screen flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden">
-      <Header tab={tab} setTab={setTab} />
       <div
         ref={containerRef}
         className="flex-1 overflow-hidden relative touch-pan-y"
@@ -133,31 +148,18 @@ function App() {
             transform: `translate3d(calc(${-idx * (100 / TABS.length)}% + ${dragDx}px), 0, 0)`,
           }}
         >
-          <div
-            className="flex-shrink-0 h-full overflow-y-auto pb-8"
-            style={{ width: `${100 / TABS.length}%` }}
-          >
-            <SessionRecorder machines={machines} onComplete={handleAdd} />
-          </div>
-          <div
-            className="flex-shrink-0 h-full overflow-y-auto pb-8"
-            style={{ width: `${100 / TABS.length}%` }}
-          >
-            <RecordList
-              records={records}
-              machines={machines}
-              onDelete={handleDelete}
-              onUpdate={handleUpdate}
-            />
-          </div>
-          <div
-            className="flex-shrink-0 h-full overflow-y-auto pb-8"
-            style={{ width: `${100 / TABS.length}%` }}
-          >
-            <MachineManager machines={machines} setMachines={setMachines} />
-          </div>
+          {tabPanels.map((panel, i) => (
+            <div
+              key={TABS[i]}
+              className="flex-shrink-0 h-full overflow-y-auto pb-8"
+              style={{ width: `${100 / TABS.length}%` }}
+            >
+              {panel}
+            </div>
+          ))}
         </div>
       </div>
+      <BottomNav tab={tab} setTab={setTab} tabs={TABS} />
     </div>
   );
 }

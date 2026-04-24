@@ -74,26 +74,23 @@ function RecordCard({ r, machineMap, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen?.(r)}
-      className="w-full text-left bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700/50 active:bg-slate-100 dark:active:bg-slate-700 transition"
+      className="w-full text-left bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700/50 active:bg-slate-100 dark:active:bg-slate-700 transition"
     >
-      <div className="mb-1">
-        <div className="text-sm text-slate-500 dark:text-slate-400">{r.date}</div>
-        <div className="font-medium text-slate-900 dark:text-white break-words">
-          {machine?.name ?? '（削除済み機種）'}
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 dark:text-slate-300 mt-2">
-        <div className={`font-semibold ${ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-          期待値: {formatSignedYen(ev)}
-        </div>
-        {profit !== null && (
-          <div className={`font-semibold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            収支: {formatSignedYen(profit)}
-          </div>
-        )}
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="text-slate-500 dark:text-slate-400 shrink-0">{r.date}</span>
+        <span className="flex items-center gap-3 text-xs font-semibold">
+          <span className={ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
+            期:{formatSignedYen(ev)}
+          </span>
+          {profit !== null && (
+            <span className={profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
+              収:{formatSignedYen(profit)}
+            </span>
+          )}
+        </span>
       </div>
       {r.notes && (
-        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">📝 {r.notes}</div>
+        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 truncate">📝 {r.notes}</div>
       )}
     </button>
   );
