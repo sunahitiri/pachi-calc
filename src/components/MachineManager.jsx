@@ -92,11 +92,15 @@ export default function MachineManager({ machines, setMachines }) {
       averagePayout: m.averagePayout?.toString() || '',
       notes: m.notes || '',
     });
+<<<<<<< HEAD
     setShowForm(true);
     // フォームが編集対象のカード直下に挿入されるので、画面内に収まるよう少しスクロール
     requestAnimationFrame(() => {
       editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+=======
+    setShowForm(false); // 新規追加フォームは閉じる
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
   };
 
   const handleDelete = (id) => {
@@ -377,13 +381,74 @@ export default function MachineManager({ machines, setMachines }) {
         </div>
       )}
 
+<<<<<<< HEAD
       {/* 追加フォーム (editing 中はインライン表示するのでここには出さない) */}
       {showForm && !editing && renderForm(false)}
+=======
+      {showForm && !editing && (
+        <form onSubmit={handleSubmit} className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg space-y-2 border border-slate-200 dark:border-slate-700">
+          <input
+            type="text"
+            placeholder="機種名"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+            required
+          />
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">初当たり確率の分母（例: 319.69）</label>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="319.69"
+              value={form.probability}
+              onChange={(e) => setForm({ ...form, probability: e.target.value })}
+              className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">平均出玉（連チャン込み・1当たり）</label>
+            <input
+              type="number"
+              placeholder="例: 1500"
+              value={form.averagePayout}
+              onChange={(e) => setForm({ ...form, averagePayout: e.target.value })}
+              className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+              required
+            />
+          </div>
+          <input
+            type="text"
+            placeholder="メモ"
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              className="flex-1 bg-blue-600 text-white py-1.5 rounded text-sm font-medium"
+            >
+              {editing ? '更新' : '追加'}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="flex-1 bg-slate-300 dark:bg-slate-600 dark:text-white py-1.5 rounded text-sm font-medium"
+            >
+              キャンセル
+            </button>
+          </div>
+        </form>
+      )}
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
 
       <div ref={listRef} className="space-y-2">
         {machines.map((m, i) => {
           const border = calcBorder(m);
           const hourlyBorder = calcHourlyBorder(m);
+          const isEditing = editing?.id === m.id;
           const isDragging = draggingId === m.id;
           // ドラッグ中のカードを指に追従させる:
           //   DOM 上での移動量 = (現在の index - 元の index) * カード高さ
@@ -398,7 +463,12 @@ export default function MachineManager({ machines, setMachines }) {
           }
           const isEditingThis = editing?.id === m.id;
           return (
+<<<<<<< HEAD
             <Fragment key={m.id}>
+=======
+            <div key={m.id}>
+              {/* 機種カード */}
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
               <div
                 ref={(el) => {
                   if (el) cardRefs.current[m.id] = el;
@@ -424,8 +494,13 @@ export default function MachineManager({ machines, setMachines }) {
                 className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-sm select-none ${
                   isDragging
                     ? 'border-blue-500 ring-2 ring-blue-400 shadow-xl cursor-grabbing'
+<<<<<<< HEAD
                     : isEditingThis
                     ? 'border-blue-400 ring-1 ring-blue-300 dark:ring-blue-500'
+=======
+                    : isEditing
+                    ? 'border-blue-400 dark:border-blue-600'
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
@@ -446,10 +521,17 @@ export default function MachineManager({ machines, setMachines }) {
                   <div className="flex gap-1">
                     <button
                       onPointerDown={(e) => e.stopPropagation()}
+<<<<<<< HEAD
                       onClick={() => (isEditingThis ? resetForm() : handleEdit(m))}
                       className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
                     >
                       {isEditingThis ? '閉じる' : '編集'}
+=======
+                      onClick={() => isEditing ? resetForm() : handleEdit(m)}
+                      className={`text-xs px-2 py-1 ${isEditing ? 'text-slate-500 dark:text-slate-400' : 'text-blue-600 dark:text-blue-400'}`}
+                    >
+                      {isEditing ? 'キャンセル' : '編集'}
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
                     </button>
                     <button
                       onPointerDown={(e) => e.stopPropagation()}
@@ -461,8 +543,74 @@ export default function MachineManager({ machines, setMachines }) {
                   </div>
                 </div>
               </div>
+<<<<<<< HEAD
               {isEditingThis && renderForm(true)}
             </Fragment>
+=======
+
+              {/* インライン編集フォーム */}
+              {isEditing && (
+                <form
+                  onSubmit={handleSubmit}
+                  className="mt-1 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg space-y-2 border border-blue-300 dark:border-blue-700"
+                >
+                  <input
+                    type="text"
+                    placeholder="機種名"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                    required
+                  />
+                  <div>
+                    <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">初当たり確率の分母（例: 319.69）</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="319.69"
+                      value={form.probability}
+                      onChange={(e) => setForm({ ...form, probability: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">平均出玉（連チャン込み・1当たり）</label>
+                    <input
+                      type="number"
+                      placeholder="例: 1500"
+                      value={form.averagePayout}
+                      onChange={(e) => setForm({ ...form, averagePayout: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                      required
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="メモ"
+                    value={form.notes}
+                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="flex-1 bg-blue-600 text-white py-1.5 rounded text-sm font-medium"
+                    >
+                      更新
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="flex-1 bg-slate-300 dark:bg-slate-600 dark:text-white py-1.5 rounded text-sm font-medium"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+>>>>>>> 478d8a54dd8189cbb1e1cd2bcf1191a278af4135
           );
         })}
       </div>
