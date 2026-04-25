@@ -22,37 +22,6 @@ function formatSignedYen(n) {
   return `${sign}¥${rounded.toLocaleString()}`;
 }
 
-function StatsRow({ summary, profit, dark = false }) {
-  const evClass = summary.totalExpectedValue >= 0
-    ? (dark ? 'text-green-400' : 'text-green-600 dark:text-green-400')
-    : (dark ? 'text-red-400' : 'text-red-600 dark:text-red-400');
-  const pfClass = profit >= 0
-    ? (dark ? 'text-green-400' : 'text-green-600 dark:text-green-400')
-    : (dark ? 'text-red-400' : 'text-red-600 dark:text-red-400');
-  const labelClass = dark ? 'text-slate-300' : 'text-slate-500 dark:text-slate-400';
-  const valueClass = dark ? 'text-white' : 'text-slate-900 dark:text-white';
-  return (
-    <div className="grid grid-cols-2 gap-2 text-center text-sm">
-      <div>
-        <div className={`text-xs ${labelClass}`}>現金投資</div>
-        <div className={`font-semibold ${valueClass}`}>¥{summary.totalInvestment.toLocaleString()}</div>
-      </div>
-      <div>
-        <div className={`text-xs ${labelClass}`}>総回転数</div>
-        <div className={`font-semibold ${valueClass}`}>{summary.totalRotations.toLocaleString()}</div>
-      </div>
-      <div>
-        <div className={`text-xs ${labelClass}`}>期待値合計</div>
-        <div className={`font-semibold ${evClass}`}>{formatSignedYen(summary.totalExpectedValue)}</div>
-      </div>
-      <div>
-        <div className={`text-xs ${labelClass}`}>収支合計</div>
-        <div className={`font-semibold ${pfClass}`}>{formatSignedYen(profit)}</div>
-      </div>
-    </div>
-  );
-}
-
 function RecordCard({ r, machineMap, onOpen }) {
   const machine = machineMap[r.machineId];
   const ev = !machine
@@ -119,9 +88,6 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId]);
-
-  const summary = useMemo(() => summarize(records, machines), [records, machines]);
-  const totalProfit = useMemo(() => computeProfit(records, machineMap), [records, machineMap]);
 
   // 年→月でグループ化
   const groups = useMemo(() => {
@@ -355,12 +321,6 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
 
   return (
     <div className="p-4 space-y-4">
-      {/* 通算 */}
-      <div className="bg-slate-800 text-white rounded-lg p-4 space-y-2">
-        <h2 className="font-bold">通算</h2>
-        <StatsRow summary={summary} profit={totalProfit} dark />
-      </div>
-
       {/* 年→月→記録 */}
       <div className="space-y-3">
         {groups.map((yg) => {

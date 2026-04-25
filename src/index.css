@@ -12,6 +12,14 @@ html, body, #root {
   padding: 0;
 }
 
+/* iOS Safari でラバーバンド/URLバー追従によりボトムナビが動くのを防ぐ */
+html, body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  position: fixed;
+  width: 100%;
+}
+
 body {
   background: #f8fafc;
 }

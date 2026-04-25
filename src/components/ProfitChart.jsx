@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { calcExpectedValue, calcSessionExpectedValue } from '../utils/calculations';
 
 // セッション記録の収支 (円)
@@ -39,305 +39,417 @@ function fmtAxis(n) {
   return `${Math.round(n)}`;
 }
 
-const MODES = [
-  { id: 'profit', label: '収支' },
-  { id: 'ev', label: '期待値' },
-];
+const PROFIT_COLOR = '#16a34a'; // green-600
+const EV_COLOR = '#2563eb'; // blue-600
+
+function lastDayOfMonth(year, month /* 1-12 */) {
+  return new Date(year, month, 0).getDate();
+}
+
+function shiftMonth({ year, month }, delta) {
+  let y = year;
+  let m = month + delta;
+  while (m < 1) {
+    m += 12;
+    y -= 1;
+  }
+  while (m > 12) {
+    m -= 12;
+    y += 1;
+  }
+  return { year: y, month: m };
+}
+
+function defaultMonth(records) {
+  let latest = '';
+  for (const r of records) {
+    if (r.date && r.date > latest) latest = r.date;
+  }
+  if (latest) {
+    return {
+      year: Number(latest.slice(0, 4)),
+      month: Number(latest.slice(5, 7)),
+    };
+  }
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
 
 export default function ProfitChart({ records, machines }) {
-  const [mode, setMode] = useState('profit');
-
   const machineMap = useMemo(
     () => Object.fromEntries(machines.map((m) => [m.id, m])),
     [machines],
   );
+  const [current, setCurrent] = useState(() => defaultMonth(records));
+  const lastDay = lastDayOfMonth(current.year, current.month);
+  const ymPrefix = `${current.year}-${String(current.month).padStart(2, '0')}`;
 
-  // 日付昇順 → 日ごとの収支 or 期待値 → 累計
+  // 月内の日次/累計データ (1日〜末日まで全日埋め)
   const series = useMemo(() => {
-    const valueFn = mode === 'profit' ? recordProfit : recordEV;
-    const byDate = new Map();
+    const profitByDay = new Map();
+    const evByDay = new Map();
     for (const r of records) {
       const d = r.date || '';
-      if (!d) continue;
-      byDate.set(d, (byDate.get(d) || 0) + valueFn(r, machineMap));
+      if (!d.startsWith(ymPrefix)) continue;
+      const day = Number(d.slice(8, 10));
+      profitByDay.set(day, (profitByDay.get(day) || 0) + recordProfit(r, machineMap));
+      evByDay.set(day, (evByDay.get(day) || 0) + recordEV(r, machineMap));
     }
-    const days = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    let acc = 0;
-    return days.map(([date, v]) => {
-      acc += v;
-      return { date, daily: v, cumulative: acc };
-    });
-  }, [records, machineMap, mode]);
+    let pAcc = 0;
+    let eAcc = 0;
+    const days = [];
+    for (let d = 1; d <= lastDay; d++) {
+      const pDaily = profitByDay.get(d) || 0;
+      const eDaily = evByDay.get(d) || 0;
+      pAcc += pDaily;
+      eAcc += eDaily;
+      days.push({
+        day: d,
+        profitDaily: pDaily,
+        evDaily: eDaily,
+        profit: pAcc,
+        ev: eAcc,
+      });
+    }
+    return days;
+  }, [records, machineMap, ymPrefix, lastDay]);
 
-  if (series.length === 0) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex gap-2">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setMode(m.id)}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-                mode === m.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <div className="p-8 text-center text-slate-500 dark:text-slate-400">
-          まだ記録がありません
-        </div>
-      </div>
-    );
-  }
+  const hasData = useMemo(
+    () => series.some((s) => s.profitDaily !== 0 || s.evDaily !== 0),
+    [series],
+  );
 
-  // SVG 座標計算
-  const W = 320; // viewBox 幅
-  const H = 200; // viewBox 高さ
-  const padL = 40;
+  // SVG 座標系
+  const W = 360;
+  const H = 220;
+  const padL = 38;
   const padR = 12;
   const padT = 12;
-  const padB = 24;
+  const padB = 38;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
-  const ys = series.map((s) => s.cumulative);
-  let yMin = Math.min(0, ...ys);
-  let yMax = Math.max(0, ...ys);
+  // Y 軸範囲: 収支・期待値の累計と 0 を含む
+  const allY = series.flatMap((s) => [s.profit, s.ev]);
+  let yMin = Math.min(0, ...allY);
+  let yMax = Math.max(0, ...allY);
   if (yMin === yMax) {
     yMin -= 1000;
     yMax += 1000;
   }
   const yRange = yMax - yMin;
 
-  const xAt = (i) =>
-    series.length === 1
+  const xAt = (day) =>
+    lastDay === 1
       ? padL + plotW / 2
-      : padL + (i / (series.length - 1)) * plotW;
+      : padL + ((day - 1) / (lastDay - 1)) * plotW;
   const yAt = (v) => padT + ((yMax - v) / yRange) * plotH;
-
   const zeroY = yAt(0);
-  const path = series
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(s.cumulative).toFixed(1)}`)
+
+  const profitPath = series
+    .map(
+      (s, i) =>
+        `${i === 0 ? 'M' : 'L'} ${xAt(s.day).toFixed(1)} ${yAt(s.profit).toFixed(1)}`,
+    )
     .join(' ');
-  // 塗りつぶし用 (0 ラインから上下を塗る)
-  const areaPath =
-    `M ${xAt(0).toFixed(1)} ${zeroY.toFixed(1)} ` +
-    series.map((s, i) => `L ${xAt(i).toFixed(1)} ${yAt(s.cumulative).toFixed(1)}`).join(' ') +
-    ` L ${xAt(series.length - 1).toFixed(1)} ${zeroY.toFixed(1)} Z`;
+  const evPath = series
+    .map(
+      (s, i) =>
+        `${i === 0 ? 'M' : 'L'} ${xAt(s.day).toFixed(1)} ${yAt(s.ev).toFixed(1)}`,
+    )
+    .join(' ');
 
   const last = series[series.length - 1];
-  const first = series[0];
-  const maxEntry = series.reduce((a, b) => (b.cumulative > a.cumulative ? b : a));
-  const minEntry = series.reduce((a, b) => (b.cumulative < a.cumulative ? b : a));
-  const lineColor = last.cumulative >= 0 ? '#16a34a' : '#dc2626'; // green-600 / red-600
-  const areaColor = last.cumulative >= 0 ? 'rgba(22,163,74,0.18)' : 'rgba(220,38,38,0.18)';
+
+  // チャート上の横スワイプで前月/翌月
+  const touchRef = useRef(null);
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY, locked: null };
+  };
+  const onTouchMove = (e) => {
+    const ref = touchRef.current;
+    if (!ref) return;
+    const t = e.touches[0];
+    const dx = t.clientX - ref.x;
+    const dy = t.clientY - ref.y;
+    if (!ref.locked && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      ref.locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+  };
+  const onTouchEnd = (e) => {
+    const ref = touchRef.current;
+    touchRef.current = null;
+    if (!ref || ref.locked !== 'x') return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - ref.x;
+    if (Math.abs(dx) < 40) return;
+    // 左スワイプ → 翌月、右スワイプ → 前月
+    setCurrent((c) => shiftMonth(c, dx < 0 ? 1 : -1));
+  };
 
   return (
     <div className="p-4 space-y-3">
-      <div className="flex gap-2">
-        {MODES.map((m) => (
-          <button
-            key={m.id}
-            onClick={() => setMode(m.id)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-              mode === m.id
-                ? 'bg-blue-600 text-white'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-            }`}
-          >
-            {m.label}
-          </button>
-        ))}
+      {/* 月ナビゲーション */}
+      <div className="flex items-center justify-between bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => setCurrent(shiftMonth(current, -1))}
+          aria-label="前月"
+          className="px-3 py-1 text-slate-700 dark:text-slate-200 text-lg leading-none hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+        >
+          ◀
+        </button>
+        <div className="font-semibold text-slate-900 dark:text-white">
+          {current.year}年{current.month}月
+        </div>
+        <button
+          type="button"
+          onClick={() => setCurrent(shiftMonth(current, 1))}
+          aria-label="翌月"
+          className="px-3 py-1 text-slate-700 dark:text-slate-200 text-lg leading-none hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+        >
+          ▶
+        </button>
       </div>
 
-      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3">
-        <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">
-          累計{mode === 'profit' ? '収支' : '期待値'}の推移
+      {/* チャート (横スワイプで月切替) */}
+      <div
+        data-no-swipe
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
+      >
+        <div className="flex items-center justify-between text-xs mb-1">
+          <div className="text-slate-500 dark:text-slate-400">月内累計</div>
+          <div className="flex gap-3">
+            <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full"
+                style={{ backgroundColor: PROFIT_COLOR }}
+              />
+              収支
+            </span>
+            <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full"
+                style={{ backgroundColor: EV_COLOR }}
+              />
+              期待値
+            </span>
+          </div>
         </div>
+
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full h-auto"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* 背景グリッド (Y軸 0 線 + 上下目盛 3 本) */}
-          {[yMax, (yMax + 0) / 2, 0, (yMin + 0) / 2, yMin].map((v, i) => {
-            if (v === yMax || v === yMin) {
-              return (
-                <g key={i}>
-                  <line
-                    x1={padL}
-                    x2={W - padR}
-                    y1={yAt(v)}
-                    y2={yAt(v)}
-                    stroke="#e2e8f0"
-                    strokeDasharray="2,3"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={padL - 4}
-                    y={yAt(v) + 3}
-                    textAnchor="end"
-                    fontSize="9"
-                    fill="#94a3b8"
-                  >
-                    {fmtAxis(v)}
-                  </text>
-                </g>
-              );
-            }
-            return null;
-          })}
+          {/* 上下境界 */}
+          <line
+            x1={padL}
+            x2={W - padR}
+            y1={yAt(yMax)}
+            y2={yAt(yMax)}
+            stroke="#e2e8f0"
+            strokeDasharray="2,3"
+            strokeWidth="1"
+          />
+          <line
+            x1={padL}
+            x2={W - padR}
+            y1={yAt(yMin)}
+            y2={yAt(yMin)}
+            stroke="#e2e8f0"
+            strokeDasharray="2,3"
+            strokeWidth="1"
+          />
+          <text
+            x={padL - 4}
+            y={yAt(yMax) + 3}
+            textAnchor="end"
+            fontSize="9"
+            fill="#94a3b8"
+          >
+            {fmtAxis(yMax)}
+          </text>
+          <text
+            x={padL - 4}
+            y={yAt(yMin) + 3}
+            textAnchor="end"
+            fontSize="9"
+            fill="#94a3b8"
+          >
+            {fmtAxis(yMin)}
+          </text>
 
           {/* ゼロライン */}
           {yMin < 0 && yMax > 0 && (
-            <line
-              x1={padL}
-              x2={W - padR}
-              y1={zeroY}
-              y2={zeroY}
-              stroke="#64748b"
-              strokeWidth="1"
-            />
+            <>
+              <line
+                x1={padL}
+                x2={W - padR}
+                y1={zeroY}
+                y2={zeroY}
+                stroke="#64748b"
+                strokeWidth="1"
+              />
+              <text
+                x={padL - 4}
+                y={zeroY + 3}
+                textAnchor="end"
+                fontSize="9"
+                fill="#64748b"
+              >
+                0
+              </text>
+            </>
           )}
 
-          {/* 0 ラベル */}
-          {yMin < 0 && yMax > 0 && (
-            <text
-              x={padL - 4}
-              y={zeroY + 3}
-              textAnchor="end"
-              fontSize="9"
-              fill="#64748b"
-            >
-              0
-            </text>
-          )}
+          {/* 日付の縦グリッド (7日刻み + 末日のみ・薄め) */}
+          {Array.from({ length: lastDay }, (_, i) => i + 1)
+            .filter((d) => d === 1 || d % 7 === 1 || d === lastDay)
+            .map((d) => (
+              <line
+                key={`grid-${d}`}
+                x1={xAt(d)}
+                x2={xAt(d)}
+                y1={padT}
+                y2={H - padB}
+                stroke="#f1f5f9"
+                strokeWidth="0.5"
+              />
+            ))}
 
-          {/* 塗りつぶし */}
-          <path d={areaPath} fill={areaColor} />
-
-          {/* 折れ線 */}
-          <path d={path} fill="none" stroke={lineColor} strokeWidth="2" />
-
-          {/* 各ポイント */}
-          {series.map((s, i) => (
+          {/* 期待値ライン (先に描画して収支を上に重ねる) */}
+          <path d={evPath} fill="none" stroke={EV_COLOR} strokeWidth="1.8" />
+          {series.map((s) => (
             <circle
-              key={s.date}
-              cx={xAt(i)}
-              cy={yAt(s.cumulative)}
-              r={series.length <= 30 ? 2.5 : 1.5}
-              fill={lineColor}
+              key={`ev-${s.day}`}
+              cx={xAt(s.day)}
+              cy={yAt(s.ev)}
+              r="1.6"
+              fill={EV_COLOR}
             />
           ))}
 
-          {/* 最終点 (強調) */}
-          <circle
-            cx={xAt(series.length - 1)}
-            cy={yAt(last.cumulative)}
-            r="4"
-            fill={lineColor}
-            stroke="#fff"
-            strokeWidth="1.5"
-          />
+          {/* 収支ライン */}
+          <path d={profitPath} fill="none" stroke={PROFIT_COLOR} strokeWidth="1.8" />
+          {series.map((s) => (
+            <circle
+              key={`p-${s.day}`}
+              cx={xAt(s.day)}
+              cy={yAt(s.profit)}
+              r="1.6"
+              fill={PROFIT_COLOR}
+            />
+          ))}
 
-          {/* X 軸: 始点・終点の日付 */}
-          <text
-            x={padL}
-            y={H - 6}
-            fontSize="9"
-            fill="#94a3b8"
-            textAnchor="start"
-          >
-            {first.date.slice(5)}
-          </text>
-          <text
-            x={W - padR}
-            y={H - 6}
-            fontSize="9"
-            fill="#94a3b8"
-            textAnchor="end"
-          >
-            {last.date.slice(5)}
-          </text>
+          {/* X 軸: 7日刻みの日付ラベル (1, 8, 15, 22, 29 + 末日) */}
+          {Array.from({ length: lastDay }, (_, i) => i + 1)
+            .filter((d) => d === 1 || d % 7 === 1 || d === lastDay)
+            .map((d) => (
+              <text
+                key={`lbl-${d}`}
+                x={xAt(d)}
+                y={H - padB + 14}
+                fontSize="9"
+                fill="#94a3b8"
+                textAnchor="middle"
+              >
+                {d}
+              </text>
+            ))}
         </svg>
 
-        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">現在</div>
-            <div
-              className={`font-semibold text-sm ${
-                last.cumulative >= 0
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-600 dark:text-red-400'
-              }`}
-            >
-              {formatSignedYen(last.cumulative)}
-            </div>
+        {!hasData && (
+          <div className="mt-1 text-center text-xs text-slate-400 dark:text-slate-500">
+            この月の記録はありません
           </div>
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">最大</div>
-            <div className="font-semibold text-sm text-green-600 dark:text-green-400">
-              {formatSignedYen(maxEntry.cumulative)}
-            </div>
-            <div className="text-[10px] text-slate-400">{maxEntry.date.slice(5)}</div>
+        )}
+      </div>
+
+      {/* 当月サマリ */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 grid grid-cols-2 gap-2 text-center text-xs">
+        <div>
+          <div className="text-slate-500 dark:text-slate-400">月内収支</div>
+          <div
+            className={`font-semibold text-sm ${
+              last.profit >= 0
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-red-600 dark:text-red-400'
+            }`}
+          >
+            {formatSignedYen(last.profit)}
           </div>
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">最小</div>
-            <div className="font-semibold text-sm text-red-600 dark:text-red-400">
-              {formatSignedYen(minEntry.cumulative)}
-            </div>
-            <div className="text-[10px] text-slate-400">{minEntry.date.slice(5)}</div>
+        </div>
+        <div>
+          <div className="text-slate-500 dark:text-slate-400">月内期待値</div>
+          <div
+            className={`font-semibold text-sm ${
+              last.ev >= 0
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-orange-600 dark:text-orange-400'
+            }`}
+          >
+            {formatSignedYen(last.ev)}
           </div>
         </div>
       </div>
 
-      {/* 日次内訳 (直近 10 件) */}
-      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-        <div className="px-3 py-2 bg-slate-100 dark:bg-slate-700/50 text-xs font-semibold text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
-          日次内訳 (直近 {Math.min(10, series.length)} 日)
-        </div>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-slate-500 dark:text-slate-400">
-              <th className="px-2 py-1.5 text-left font-medium">日付</th>
-              <th className="px-2 py-1.5 text-right font-medium">当日</th>
-              <th className="px-2 py-1.5 text-right font-medium">累計</th>
-            </tr>
-          </thead>
-          <tbody>
-            {series.slice(-10).reverse().map((s) => (
-              <tr
-                key={s.date}
-                className="border-t border-slate-100 dark:border-slate-700/60"
-              >
-                <td className="px-2 py-1.5 text-slate-800 dark:text-slate-200">{s.date}</td>
-                <td
-                  className={`px-2 py-1.5 text-right font-semibold ${
-                    s.daily >= 0
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {formatSignedYen(s.daily)}
-                </td>
-                <td
-                  className={`px-2 py-1.5 text-right font-semibold ${
-                    s.cumulative >= 0
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {formatSignedYen(s.cumulative)}
-                </td>
+      {/* 日次内訳 (記録のある日のみ・降順) */}
+      {hasData && (
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <div className="px-3 py-2 bg-slate-100 dark:bg-slate-700/50 text-xs font-semibold text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
+            日次内訳
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-slate-500 dark:text-slate-400">
+                <th className="px-2 py-1.5 text-left font-medium">日</th>
+                <th className="px-2 py-1.5 text-right font-medium">収支</th>
+                <th className="px-2 py-1.5 text-right font-medium">期待値</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {series
+                .filter((s) => s.profitDaily !== 0 || s.evDaily !== 0)
+                .slice()
+                .reverse()
+                .map((s) => (
+                  <tr
+                    key={s.day}
+                    className="border-t border-slate-100 dark:border-slate-700/60"
+                  >
+                    <td className="px-2 py-1.5 text-slate-800 dark:text-slate-200">
+                      {s.day}日
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-right font-semibold ${
+                        s.profitDaily >= 0
+                          ? 'text-green-600 dark:text-green-400'
+                          : 'text-red-600 dark:text-red-400'
+                      }`}
+                    >
+                      {formatSignedYen(s.profitDaily)}
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-right font-semibold ${
+                        s.evDaily >= 0
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-orange-600 dark:text-orange-400'
+                      }`}
+                    >
+                      {formatSignedYen(s.evDaily)}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

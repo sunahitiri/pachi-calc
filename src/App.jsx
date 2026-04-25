@@ -130,7 +130,10 @@ function App() {
   ];
 
   return (
-    <div className="h-screen flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden">
+    <div
+      className="flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden"
+      style={{ height: '100dvh' }}
+    >
       <div
         ref={containerRef}
         className="flex-1 overflow-hidden relative touch-pan-y"

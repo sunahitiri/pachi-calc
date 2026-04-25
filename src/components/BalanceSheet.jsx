@@ -36,6 +36,44 @@ function colorClass(n) {
   return 'text-slate-700 dark:text-slate-200';
 }
 
+// 投資 (符号無し、白系) / 回収 (符号付き、正負で色付け) の行
+function StatRow({ label, value, signed }) {
+  const text = signed
+    ? formatSignedYen(value)
+    : `¥${Math.round(value).toLocaleString()}`;
+  const color = signed
+    ? value > 0
+      ? 'text-green-400'
+      : value < 0
+      ? 'text-red-400'
+      : 'text-slate-200'
+    : 'text-slate-100';
+  return (
+    <div className="flex justify-between">
+      <dt className="text-slate-400">{label}</dt>
+      <dd className={`font-semibold ${color}`}>{text}</dd>
+    </div>
+  );
+}
+
+// 数値配列の合計/最大/最小/平均/中央値
+function summaryStats(arr) {
+  if (arr.length === 0) {
+    return { sum: 0, max: 0, min: 0, mean: 0, median: 0, count: 0 };
+  }
+  const sum = arr.reduce((a, b) => a + b, 0);
+  const max = Math.max(...arr);
+  const min = Math.min(...arr);
+  const mean = sum / arr.length;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+  return { sum, max, min, mean, median, count: arr.length };
+}
+
 export default function BalanceSheet({ records, machines }) {
   const machineMap = useMemo(
     () => Object.fromEntries(machines.map((m) => [m.id, m])),
@@ -93,6 +131,19 @@ export default function BalanceSheet({ records, machines }) {
 
   const total = useMemo(() => summarize(records, machines), [records, machines]);
 
+  // 投資 / 回収 (= 収支) の通算統計 — セッション記録のみ対象
+  const stats = useMemo(() => {
+    const sessions = records.filter((r) => r.isSession);
+    const investments = sessions.map(
+      (r) => Number(r.totalInvestment ?? r.investment) || 0,
+    );
+    const recoveries = sessions.map((r) => recordProfit(r, machineMap));
+    return {
+      investment: summaryStats(investments),
+      recovery: summaryStats(recoveries),
+    };
+  }, [records, machineMap]);
+
   if (records.length === 0) {
     return (
       <div className="p-8 text-center text-slate-500 dark:text-slate-400">
@@ -116,10 +167,6 @@ export default function BalanceSheet({ records, machines }) {
             <div className="font-semibold">{total.totalRotations.toLocaleString()} 回</div>
           </div>
           <div>
-            <div className="text-xs text-slate-300">現金投資</div>
-            <div className="font-semibold">¥{Math.round(grand.investment).toLocaleString()}</div>
-          </div>
-          <div>
             <div className="text-xs text-slate-300">収支</div>
             <div
               className={`font-semibold ${
@@ -129,7 +176,7 @@ export default function BalanceSheet({ records, machines }) {
               {formatSignedYen(grand.profit)}
             </div>
           </div>
-          <div className="col-span-2">
+          <div>
             <div className="text-xs text-slate-300">期待値合計</div>
             <div
               className={`font-semibold ${
@@ -138,6 +185,30 @@ export default function BalanceSheet({ records, machines }) {
             >
               {formatSignedYen(grand.ev)}
             </div>
+          </div>
+        </div>
+
+        {/* 投資 / 回収 統計 (左右並列) */}
+        <div className="border-t border-slate-700 mt-3 pt-3 grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs text-slate-300 font-semibold mb-1">投資</div>
+            <dl className="space-y-0.5 text-xs">
+              <StatRow label="合計"   value={stats.investment.sum} />
+              <StatRow label="最大"   value={stats.investment.max} />
+              <StatRow label="最小"   value={stats.investment.min} />
+              <StatRow label="平均"   value={stats.investment.mean} />
+              <StatRow label="中央値" value={stats.investment.median} />
+            </dl>
+          </div>
+          <div>
+            <div className="text-xs text-slate-300 font-semibold mb-1">回収</div>
+            <dl className="space-y-0.5 text-xs">
+              <StatRow label="合計"   value={stats.recovery.sum}    signed />
+              <StatRow label="最大"   value={stats.recovery.max}    signed />
+              <StatRow label="最小"   value={stats.recovery.min}    signed />
+              <StatRow label="平均"   value={stats.recovery.mean}   signed />
+              <StatRow label="中央値" value={stats.recovery.median} signed />
+            </dl>
           </div>
         </div>
       </div>
