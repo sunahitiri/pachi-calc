@@ -677,7 +677,10 @@ export default function SessionRecorder({ machines, onComplete }) {
 
       <button
         onClick={() => (showDetail ? cancelDetail() : openDetail())}
-        className="w-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 py-2 rounded-lg font-medium text-sm hover:bg-slate-300 dark:hover:bg-slate-600"
+        className={`w-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 py-2 rounded-lg font-medium text-sm hover:bg-slate-300 dark:hover:bg-slate-600 ${
+          // 詳細編集中はスクロールしても画面最上部に残るよう sticky 化
+          showDetail ? 'sticky top-0 z-10 shadow-md' : ''
+        }`}
       >
         {showDetail ? '▾ 遊戯詳細を閉じる' : '▸ 遊戯詳細を表示'}
       </button>
