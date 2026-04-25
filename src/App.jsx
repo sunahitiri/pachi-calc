@@ -133,7 +133,10 @@ function App() {
     <div
       className="flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden"
       style={{
-        height: '100dvh',
+        // iOS PWA standalone では 100dvh が safe-area-inset-bottom を除外するため、
+        // 明示的に足し戻してナビ下端が実際のスクリーン下端まで届くようにする。
+        // Safari (browser) では env(safe-area-inset-bottom) = 0 なので影響なし。
+        height: 'calc(100dvh + env(safe-area-inset-bottom, 0px))',
         // iPhone のカメラ/ノッチ領域に被らないよう上端の safe-area を確保
         paddingTop: 'env(safe-area-inset-top, 0px)',
       }}
