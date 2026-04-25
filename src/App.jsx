@@ -132,7 +132,11 @@ function App() {
   return (
     <div
       className="flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden"
-      style={{ height: '100dvh' }}
+      style={{
+        height: '100dvh',
+        // iPhone のカメラ/ノッチ領域に被らないよう上端の safe-area を確保
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+      }}
     >
       <div
         ref={containerRef}

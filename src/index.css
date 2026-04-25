@@ -16,16 +16,11 @@ html, body, #root {
 html, body {
   overflow: hidden;
   overscroll-behavior: none;
-  position: fixed;
-  width: 100%;
 }
 
+/* body の背景色はボトムナビと同色 (slate-900) に統一。
+ * これにより iPhone PWA のホームインジケータ領域や、
+ * 万一のラバーバンド時にもタブと同じ色が見える。 */
 body {
-  background: #f8fafc;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0f172a;
-  }
+  background: #0f172a;
 }
