@@ -23,7 +23,7 @@ export default function BottomNav({ tab, setTab, tabs }) {
               key={id}
               type="button"
               onClick={() => setTab(id)}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition ${
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 pt-2 pb-1 text-[11px] font-medium transition ${
                 active
                   ? 'text-yellow-300'
                   : 'text-slate-400 hover:text-slate-200'
