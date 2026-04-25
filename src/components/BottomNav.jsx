@@ -12,12 +12,7 @@ export default function BottomNav({ tab, setTab, tabs }) {
   return (
     <nav
       className="flex-shrink-0 bg-slate-900 text-white border-t border-slate-700"
-      style={{
-        // iPhone のホームインジケータ用に safe-area を確保するが、
-        // PWA standalone でフル 34px が確保されると余白が大きすぎるので
-        // 0.5rem (8px) を上限にしてキャップする
-        paddingBottom: 'min(env(safe-area-inset-bottom, 0px), 0.5rem)',
-      }}
+      // PWA standalone でも Safari でも下部余白なし (ホームインジケータと重なって OK)
     >
       <div className="flex">
         {tabs.map((id) => {
