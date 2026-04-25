@@ -24,16 +24,29 @@ export function expectedValuePerRotation(perK, machine) {
   return income - costPerRotation;
 }
 
-// 参考: 機種のボーダー(1Kあたり回転数)を計算
-// ボーダー = 1回転コスト = 1回転期待収入 のときの1Kあたり回転数
-// 1000/perK = hitRate × averagePayout × exchangeRate
-// perK = 1000 / (hitRate × averagePayout × exchangeRate)
+// 参考: 機種のボーダー(1Kあたり回転数)を計算 = 「持ち玉ボーダー」
+// 持ち玉だけで投資した場合の収支ゼロ点。1玉 = 4円 (玉貸し単価) として計算するので、
+// exchangeRate には依存しない (= 等価の場合の現金ボーダーと一致)。
+//
+// 導出:
+//   1000円分の持ち玉を投資 → 250玉 → R 回転
+//   1回転あたりコスト(円) = 250 × 4 / R = 1000/R   (玉単価 4円換算)
+//   1回転あたり期待収入(円) = hitRate × averagePayout × exchangeRate
+//   ※ 収入は実際の換金レートを使うが、コスト側 (持ち玉) は 4円/玉 固定
+//   破綻点: 1000/R = hitRate × averagePayout × exchangeRate
+//   ⇒ R = 1000 / (hitRate × averagePayout × exchangeRate)
+//
+//   ……これは現金ボーダーと同じ式。実は「持ち玉ボーダー」と「現金ボーダー」が
+//   分かれるのは、投資側を玉数 (250玉固定) で測るか円 (1000円固定) で測るかの
+//   慣習の違いに依る。一般的なパチンコ理論では持ち玉ボーダーは「250玉あたりの
+//   破綻回転数 = 250 / (hitRate × averagePayout)」で表現するためそちらを採用する。
 export function calcBorder(machine) {
   if (!machine) return 0;
   const hitRate = 1 / machine.probability;
-  const income = hitRate * machine.averagePayout * machine.exchangeRate;
-  if (income <= 0) return 0;
-  return 1000 / income;
+  const expectedBalls = hitRate * machine.averagePayout;
+  if (expectedBalls <= 0) return 0;
+  // 250玉あたり破綻回転数 (= 等価相当のボーダー)
+  return 250 / expectedBalls;
 }
 
 // 時給1000円ボーダー: 200回転あたり期待値1000円を達成するための回転数/1K

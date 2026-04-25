@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { calcBorder } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { finalSegmentInvestment } from '../utils/sessionUtils';
 import SessionDetail from './SessionDetail';
 import MachineSelector from './MachineSelector';
 
@@ -298,6 +299,11 @@ export default function SessionRecorder({ machines, onComplete }) {
     // このセグメントで回した分をあたり発生時点で確定して累計に加算
     const thisSegmentRot = Math.max(0, session.currentRotations - segmentStart);
     const newCumulative = cumulative + thisSegmentRot;
+    // このあたり直前までに投入された現金のうち、まだどの hit にも紐付いていない分。
+    // (= 直前のセグメント中に追加された現金。あたり後画面の追加投資 addInv とは別物)
+    // これを当該 hit の addedInvestment に帰属させ、遊戯詳細で各セクションごとの現金投資が
+    // 正しく表示されるようにする。
+    const segmentInvestment = finalSegmentInvestment(session);
     const hit = {
       atMachineRot: session.currentRotations,
       atCumulative: newCumulative,
@@ -306,7 +312,7 @@ export default function SessionRecorder({ machines, onComplete }) {
       ballsBefore: session.currentBalls,
       ballsAfter: newBalls,
       ballsGained: newBalls - session.currentBalls,
-      addedInvestment: addInv,
+      addedInvestment: segmentInvestment + addInv,
       timestamp: new Date().toISOString(),
     };
     setSession({

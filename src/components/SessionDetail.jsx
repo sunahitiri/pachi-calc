@@ -56,19 +56,6 @@ function CompactInput({ label, value, onChange }) {
   );
 }
 
-function CompactDisplay({ label, value }) {
-  return (
-    <div>
-      <span className="block text-xs text-slate-500 dark:text-slate-400 text-center mb-0.5">
-        {label}
-      </span>
-      <div className="w-full px-1.5 py-1 bg-slate-100 dark:bg-slate-600 rounded text-sm text-center text-slate-700 dark:text-slate-200 font-medium">
-        {value ?? '-'}
-      </div>
-    </div>
-  );
-}
-
 function NumField({ label, value, onChange, suffix }) {
   return (
     <label className="block">
@@ -138,6 +125,23 @@ export default function SessionDetail({
     });
   };
 
+  // 「あたり N 回目の持ち玉」(= ballsBefore) は派生フィールド (前段の ballsAfter / startBalls
+  // から計算される) なので、直接編集はできない。代わりに、前段にあたる値 (1 回目なら
+  // session.startBalls、2 回目以降は hits[idx-1].ballsAfter) を書き換えることで、
+  // 結果として ballsBefore が新しい値になるよう伝播させる。
+  const patchHitBallsBefore = (idx, value) => {
+    const newVal = Math.max(0, numOr(value, 0));
+    if (idx === 0) {
+      applyChange({ startBalls: newVal });
+    } else {
+      const hits = session.hits || [];
+      const newHits = hits.map((h, i) =>
+        i === idx - 1 ? { ...h, ballsAfter: newVal } : h
+      );
+      applyChange({ hits: newHits });
+    }
+  };
+
   const finalInv = finalSegmentInvestment(session);
 
   return (
@@ -167,7 +171,7 @@ export default function SessionDetail({
       {/* あたり行 (hit + after-hit) */}
       {(session.hits || []).map((h, i) => (
         <div key={i} className="space-y-1">
-          {/* あたり x回目: 回転数 / 持ち玉(表示のみ) / 現金投資 を横一行 */}
+          {/* あたり x回目: 回転数 / 持ち玉 / 現金投資 を横一行 */}
           <RowShell badge="🎯" title={`あたり ${i + 1}回目`} accent="hit">
             <div className="grid grid-cols-3 gap-2">
               <CompactInput
@@ -175,9 +179,10 @@ export default function SessionDetail({
                 value={h.atMachineRot}
                 onChange={(v) => patchHit(i, { atMachineRot: numOr(v, 0) })}
               />
-              <CompactDisplay
+              <CompactInput
                 label="持ち玉(個)"
                 value={h.ballsBefore ?? 0}
+                onChange={(v) => patchHitBallsBefore(i, v)}
               />
               <CompactInput
                 label="現金投資(円)"

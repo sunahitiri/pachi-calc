@@ -65,9 +65,13 @@ describe('expectedValuePerRotation', () => {
     expect(expectedValuePerRotation(undefined, MACHINE)).toBe(0);
   });
 
-  it('ボーダー付近の回転数でEVがほぼ0になる', () => {
-    const border = calcBorder(MACHINE);
-    const result = expectedValuePerRotation(border, MACHINE);
+  it('等価機種ではボーダー付近の回転数でEVがほぼ0になる', () => {
+    // calcBorder は 1玉=4円 (玉貸し相当) で計算する持ち玉ボーダー。
+    // expectedValuePerRotation は exchangeRate を使う現金ベース EV。
+    // 両者が一致するのは exchangeRate=4 (等価) のときのみ。
+    const equivalent = { ...MACHINE, exchangeRate: 4 };
+    const border = calcBorder(equivalent);
+    const result = expectedValuePerRotation(border, equivalent);
     expect(result).toBeCloseTo(0, 5);
   });
 });
@@ -75,10 +79,17 @@ describe('expectedValuePerRotation', () => {
 // ---- calcBorder ----
 
 describe('calcBorder', () => {
-  it('正常な機種でボーダーを計算する', () => {
-    // border = 1000 / ((1/319) * 2400 * 3.57) ≈ 37.24
+  it('持ち玉ボーダー = 250 / ((1/319) * 2400) ≈ 33.23', () => {
     const result = calcBorder(MACHINE);
-    expect(result).toBeCloseTo(37.24, 1);
+    expect(result).toBeCloseTo(33.23, 1);
+  });
+
+  it('exchangeRate に依存しない (持ち玉ボーダー仕様)', () => {
+    const a = calcBorder({ ...MACHINE, exchangeRate: 4 });    // 等価
+    const b = calcBorder({ ...MACHINE, exchangeRate: 3.57 }); // 28玉
+    const c = calcBorder({ ...MACHINE, exchangeRate: 0 });    // 形式上 0
+    expect(a).toBeCloseTo(b, 5);
+    expect(a).toBeCloseTo(c, 5);
   });
 
   it('machineがnull → 0', () => {
@@ -89,8 +100,8 @@ describe('calcBorder', () => {
     expect(calcBorder(undefined)).toBe(0);
   });
 
-  it('exchangeRate=0 のとき income=0 → 0 を返す', () => {
-    expect(calcBorder({ ...MACHINE, exchangeRate: 0 })).toBe(0);
+  it('averagePayout=0 → expectedBalls=0 → 0 を返す', () => {
+    expect(calcBorder({ ...MACHINE, averagePayout: 0 })).toBe(0);
   });
 });
 
