@@ -13,8 +13,9 @@ export default function BottomNav({ tab, setTab, tabs }) {
     <nav
       className="flex-shrink-0 bg-slate-900 text-white border-t border-slate-700"
       style={{
-        // iPhone のホームインジケータ領域のみを確保 (それ以外の余白は付けない)
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        // iPhone のホームインジケータ用に safe-area を確保するが、
+        // ナビ自体の高さの半分 (1.5rem ≒ 24px) を上限にして余白が大きくなり過ぎないようにする
+        paddingBottom: 'min(env(safe-area-inset-bottom, 0px), 1.5rem)',
       }}
     >
       <div className="flex">
