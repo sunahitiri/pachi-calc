@@ -89,35 +89,48 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId]);
 
-  // 年→月でグループ化
+  // 年→月→日 でグループ化
   const groups = useMemo(() => {
-    const byYear = new Map();
+    const byYear = new Map(); // year -> Map<ym, Map<ymd, records[]>>
     for (const r of records) {
       const date = r.date || '';
       const year = date.slice(0, 4);
-      const ym = date.slice(0, 7); // YYYY-MM
-      if (!year || !ym) continue;
+      const ym = date.slice(0, 7);  // YYYY-MM
+      const ymd = date.slice(0, 10); // YYYY-MM-DD
+      if (!year || !ym || !ymd) continue;
       if (!byYear.has(year)) byYear.set(year, new Map());
       const monthMap = byYear.get(year);
-      if (!monthMap.has(ym)) monthMap.set(ym, []);
-      monthMap.get(ym).push(r);
+      if (!monthMap.has(ym)) monthMap.set(ym, new Map());
+      const dayMap = monthMap.get(ym);
+      if (!dayMap.has(ymd)) dayMap.set(ymd, []);
+      dayMap.get(ymd).push(r);
     }
     return [...byYear.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([year, monthMap]) => {
         const months = [...monthMap.entries()]
           .sort((a, b) => b[0].localeCompare(a[0]))
-          .map(([month, recs]) => {
-            const sorted = [...recs].sort(
-              (a, b) =>
-                b.date.localeCompare(a.date) ||
-                (b.createdAt || '').localeCompare(a.createdAt || '')
-            );
+          .map(([month, dayMap]) => {
+            const days = [...dayMap.entries()]
+              .sort((a, b) => b[0].localeCompare(a[0]))
+              .map(([day, recs]) => {
+                const sorted = [...recs].sort(
+                  (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+                );
+                return {
+                  day,
+                  records: sorted,
+                  summary: summarize(sorted, machines),
+                  profit: computeProfit(sorted, machineMap),
+                };
+              });
+            const monthRecs = days.flatMap((d) => d.records);
             return {
               month,
-              records: sorted,
-              summary: summarize(sorted, machines),
-              profit: computeProfit(sorted, machineMap),
+              days,
+              records: monthRecs,
+              summary: summarize(monthRecs, machines),
+              profit: computeProfit(monthRecs, machineMap),
             };
           });
         const yearRecs = months.flatMap((m) => m.records);
@@ -131,13 +144,16 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
       });
   }, [records, machines, machineMap]);
 
-  // デフォルト: 最新の年・最新の月を展開、それ以外は畳む
+  // デフォルト: 最新の年・最新の月・最新の日を展開、それ以外は畳む
   const defaultExpanded = useMemo(() => {
     const s = new Set();
     if (groups.length > 0) {
       s.add('y:' + groups[0].year);
       if (groups[0].months.length > 0) {
         s.add('m:' + groups[0].months[0].month);
+        if (groups[0].months[0].days.length > 0) {
+          s.add('d:' + groups[0].months[0].days[0].day);
+        }
       }
     }
     return s;
@@ -416,14 +432,68 @@ export default function RecordList({ records, machines, onDelete, onUpdate }) {
                         </button>
                         {mOpen && (
                           <div className="p-2 pt-0 space-y-2">
-                            {mg.records.map((r) => (
-                              <RecordCard
-                                key={r.id}
-                                r={r}
-                                machineMap={machineMap}
-                                onOpen={() => setEditingId(r.id)}
-                              />
-                            ))}
+                            {mg.days.map((dg) => {
+                              const dKey = 'd:' + dg.day;
+                              const dOpen = isExpanded(dKey);
+                              const dayLabel = String(parseInt(dg.day.slice(8), 10));
+                              return (
+                                <div
+                                  key={dg.day}
+                                  className="bg-white dark:bg-slate-800/60 rounded overflow-hidden border border-slate-200 dark:border-slate-700"
+                                >
+                                  <button
+                                    onClick={() => toggle(dKey)}
+                                    className="w-full p-2 hover:bg-slate-50 dark:hover:bg-slate-700/40 text-left"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-slate-400 text-sm w-4">
+                                          {dOpen ? '▾' : '▸'}
+                                        </span>
+                                        <span className="font-medium text-slate-800 dark:text-slate-100 text-sm">
+                                          {dayLabel}日
+                                        </span>
+                                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                                          ({dg.records.length}件)
+                                        </span>
+                                      </div>
+                                      <div className="flex gap-3 text-xs font-medium">
+                                        <span
+                                          className={
+                                            dg.summary.totalExpectedValue >= 0
+                                              ? 'text-green-600 dark:text-green-400'
+                                              : 'text-red-600 dark:text-red-400'
+                                          }
+                                        >
+                                          期:{formatSignedYen(dg.summary.totalExpectedValue)}
+                                        </span>
+                                        <span
+                                          className={
+                                            dg.profit >= 0
+                                              ? 'text-green-600 dark:text-green-400'
+                                              : 'text-red-600 dark:text-red-400'
+                                          }
+                                        >
+                                          収:{formatSignedYen(dg.profit)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </button>
+                                  {dOpen && (
+                                    <div className="p-2 pt-0 space-y-2">
+                                      {dg.records.map((r) => (
+                                        <RecordCard
+                                          key={r.id}
+                                          r={r}
+                                          machineMap={machineMap}
+                                          onOpen={() => setEditingId(r.id)}
+                                        />
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
