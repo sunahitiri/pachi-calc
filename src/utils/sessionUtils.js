@@ -2,14 +2,19 @@
 //
 // 編集可能なベースフィールド:
 //   - startRotations, startBalls
-//   - hits[i].atMachineRot, hits[i].resumeMachineRot, hits[i].ballsAfter, hits[i].addedInvestment
+//   - hits[i].atMachineRot, hits[i].resumeMachineRot, hits[i].ballsBefore, hits[i].ballsAfter,
+//     hits[i].addedInvestment
 //   - endRotations / endBalls (完了済み記録) または currentRotations / currentBalls (進行中)
 //   - totalInvestment (= Σ hits[].addedInvestment + 最終セグメントの追加投資)
 //
 // 派生フィールド (自動計算):
-//   - hits[i].ballsBefore, hits[i].ballsGained, hits[i].segmentRot, hits[i].atCumulative
+//   - hits[i].ballsGained, hits[i].segmentRot, hits[i].atCumulative
 //   - cumulativeRotations, segmentStartRotations
 //   - rotations (累計回転), investment (累計投資) -- RecordList サマリ互換
+//
+// ※ hits[i].ballsBefore は「あたり時の持ち玉」を指す独立保存フィールド。
+//   保存値があればそれを使い、無い場合のみ前段の ballsAfter (または startBalls) にフォールバック。
+//   これにより「前のあたり後の持ち玉」と「次のあたり時の持ち玉」を個別に編集できる。
 
 const BALL_VALUE = 4; // 1玉 = 4円
 
@@ -53,7 +58,12 @@ export function recalcSession(session) {
 
     const segmentRot = Math.max(0, atMachineRot - prevResume);
     cumulative += segmentRot;
-    const ballsBefore = prevBalls;
+    // ballsBefore は独立保存フィールド。保存値があればそれを尊重し (個別編集可)、
+    // 値が無いときのみ前段 (= prevBalls) にフォールバックする。
+    const ballsBefore =
+      h.ballsBefore !== undefined && h.ballsBefore !== null && h.ballsBefore !== ''
+        ? Math.max(0, numOrFallback(h.ballsBefore, prevBalls))
+        : prevBalls;
     const ballsGained = ballsAfter - ballsBefore;
 
     hits.push({

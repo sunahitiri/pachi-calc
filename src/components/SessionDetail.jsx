@@ -125,21 +125,16 @@ export default function SessionDetail({
     });
   };
 
-  // 「あたり N 回目の持ち玉」(= ballsBefore) は派生フィールド (前段の ballsAfter / startBalls
-  // から計算される) なので、直接編集はできない。代わりに、前段にあたる値 (1 回目なら
-  // session.startBalls、2 回目以降は hits[idx-1].ballsAfter) を書き換えることで、
-  // 結果として ballsBefore が新しい値になるよう伝播させる。
+  // 「あたり N 回目の持ち玉」(= hits[idx].ballsBefore) を独立フィールドとして直接編集する。
+  // 前のセクションの ballsAfter (= hits[idx-1].ballsAfter) や session.startBalls とは
+  // 連動させない (ユーザー要望: 個別に変更可能にする)。
   const patchHitBallsBefore = (idx, value) => {
     const newVal = Math.max(0, numOr(value, 0));
-    if (idx === 0) {
-      applyChange({ startBalls: newVal });
-    } else {
-      const hits = session.hits || [];
-      const newHits = hits.map((h, i) =>
-        i === idx - 1 ? { ...h, ballsAfter: newVal } : h
-      );
-      applyChange({ hits: newHits });
-    }
+    const hits = session.hits || [];
+    const newHits = hits.map((h, i) =>
+      i === idx ? { ...h, ballsBefore: newVal } : h
+    );
+    applyChange({ hits: newHits });
   };
 
   const finalInv = finalSegmentInvestment(session);
