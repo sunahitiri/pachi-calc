@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { recalcSession, finalSegmentInvestment } from '../utils/sessionUtils';
 
 // 遊戯詳細 (編集可能なタイムライン)
@@ -39,7 +39,42 @@ function RowShell({ badge, title, accent, children, actions }) {
   );
 }
 
+// 数値入力欄をフォーカス中はローカル文字列で管理し、親からの値で上書きしないためのフック。
+// (フィールドを空にした瞬間に親側で 0 に丸められ、再レンダーで "0" が戻ってしまう問題への対処)
+function useEditableNumberText(value) {
+  const formatted = value === null || value === undefined ? '' : String(value);
+  const [text, setText] = useState(formatted);
+  const focusedRef = useRef(false);
+  const lastFormattedRef = useRef(formatted);
+
+  // 親の値が外部要因で変わった場合のみ同期 (フォーカス中は同期しない)
+  useEffect(() => {
+    if (focusedRef.current) return;
+    if (formatted !== lastFormattedRef.current) {
+      setText(formatted);
+      lastFormattedRef.current = formatted;
+    } else if (text !== formatted) {
+      // ブラー時に親が再フォーマットしたケース等のリカバリ
+      setText(formatted);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formatted]);
+
+  const handleFocus = () => {
+    focusedRef.current = true;
+  };
+  const handleBlur = () => {
+    focusedRef.current = false;
+    // ブラー時に親の正規化済み値で表示を統一
+    setText(formatted);
+    lastFormattedRef.current = formatted;
+  };
+
+  return { text, setText, handleFocus, handleBlur };
+}
+
 function CompactInput({ label, value, onChange }) {
+  const { text, setText, handleFocus, handleBlur } = useEditableNumberText(value);
   return (
     <div>
       <span className="block text-xs text-slate-500 dark:text-slate-400 text-center mb-0.5">
@@ -48,8 +83,13 @@ function CompactInput({ label, value, onChange }) {
       <input
         type="number"
         inputMode="numeric"
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
+        value={text}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(e.target.value);
+        }}
         className="w-full min-w-0 px-1.5 py-1 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm text-center"
       />
     </div>
@@ -57,6 +97,7 @@ function CompactInput({ label, value, onChange }) {
 }
 
 function NumField({ label, value, onChange, suffix }) {
+  const { text, setText, handleFocus, handleBlur } = useEditableNumberText(value);
   return (
     <label className="block">
       <span className="block text-xs text-slate-600 dark:text-slate-300 mb-0.5">
@@ -66,8 +107,13 @@ function NumField({ label, value, onChange, suffix }) {
         <input
           type="number"
           inputMode="numeric"
-          value={value ?? ''}
-          onChange={(e) => onChange(e.target.value)}
+          value={text}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          onChange={(e) => {
+            setText(e.target.value);
+            onChange(e.target.value);
+          }}
           className="w-full min-w-0 px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
         />
         {suffix && (
