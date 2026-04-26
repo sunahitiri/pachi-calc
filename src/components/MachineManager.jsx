@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { calcBorder, calcHourlyBorder } from '../utils/calculations';
 import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
+import DataMigration from './DataMigration';
 
 export default function MachineManager({ machines, setMachines }) {
   const [showForm, setShowForm] = useState(false);
@@ -479,6 +480,11 @@ export default function MachineManager({ machines, setMachines }) {
         <div className="mt-1">
           <strong>並べ替え:</strong> カードを長押し（約0.5秒）→ 上下にドラッグで順番を入れ替えられます。
         </div>
+      </div>
+
+      {/* スマホ買い替え時などの全データ引き継ぎ用エクスポート/インポート */}
+      <div className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-700">
+        <DataMigration />
       </div>
     </div>
   );
