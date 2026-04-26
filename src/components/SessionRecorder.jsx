@@ -166,6 +166,9 @@ export default function SessionRecorder({ machines, onComplete }) {
       setCurBallsInput(String(session.currentBalls));
       setAddInvInput('');
     }
+    // セッションが切り替わった (= id が変わった or null になった) ら、
+    // 前回開いていた遊戯詳細パネルが次セッションに引き継がれないようリセット
+    setDetailDraft(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, session?.phase]);
 
