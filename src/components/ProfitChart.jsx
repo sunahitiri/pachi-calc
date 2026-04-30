@@ -129,22 +129,54 @@ export default function ProfitChart({ records, machines }) {
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
-  // Y 軸範囲: 収支・期待値の累計と 0 を含む
-  const allY = series.flatMap((s) => [s.profit, s.ev]);
-  let yMin = Math.min(0, ...allY);
-  let yMax = Math.max(0, ...allY);
-  if (yMin === yMax) {
-    yMin -= 1000;
-    yMax += 1000;
-  }
-  const yRange = yMax - yMin;
+  // Y 軸範囲: 収支・期待値の累計と 0 を含み、上下に余白を確保 + ナイス数で丸め
+  const { yMin, yMax, yRange, yTicks } = useMemo(() => {
+    const allY = series.flatMap((s) => [s.profit, s.ev]);
+    let rawMin = Math.min(0, ...allY);
+    let rawMax = Math.max(0, ...allY);
+    // データなし or フラット時は ±1000 で初期表示
+    if (rawMin === rawMax) {
+      rawMin -= 1000;
+      rawMax += 1000;
+    }
+    const span = rawMax - rawMin;
+    // 上下に 12% パディング (データが境界に張り付かないように)
+    const pad = span * 0.12;
+    const padMin = rawMin - pad;
+    const padMax = rawMax + pad;
+
+    // 目標ティック数からきりの良いステップを算出 (1/2/5 × 10^k)
+    const niceStep = (range, target = 5) => {
+      const rough = range / target;
+      if (rough <= 0) return 1;
+      const exp = Math.floor(Math.log10(rough));
+      const base = rough / Math.pow(10, exp);
+      let nice;
+      if (base < 1.5) nice = 1;
+      else if (base < 3) nice = 2;
+      else if (base < 7) nice = 5;
+      else nice = 10;
+      return nice * Math.pow(10, exp);
+    };
+    const step = niceStep(padMax - padMin);
+    let yMin = Math.floor(padMin / step) * step;
+    let yMax = Math.ceil(padMax / step) * step;
+    // 0 を必ず含める
+    if (yMin > 0) yMin = 0;
+    if (yMax < 0) yMax = 0;
+    const yRange = yMax - yMin || 1;
+    const yTicks = [];
+    for (let v = yMin; v <= yMax + step / 2; v += step) {
+      yTicks.push(Math.round(v));
+    }
+    return { yMin, yMax, yRange, yTicks };
+  }, [series]);
 
   const xAt = (day) =>
     lastDay === 1
       ? padL + plotW / 2
       : padL + ((day - 1) / (lastDay - 1)) * plotW;
   const yAt = (v) => padT + ((yMax - v) / yRange) * plotH;
-  const zeroY = yAt(0);
 
   const profitPath = series
     .map(
@@ -247,66 +279,32 @@ export default function ProfitChart({ records, machines }) {
           className="w-full h-auto"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* 上下境界 */}
-          <line
-            x1={padL}
-            x2={W - padR}
-            y1={yAt(yMax)}
-            y2={yAt(yMax)}
-            stroke="#e2e8f0"
-            strokeDasharray="2,3"
-            strokeWidth="1"
-          />
-          <line
-            x1={padL}
-            x2={W - padR}
-            y1={yAt(yMin)}
-            y2={yAt(yMin)}
-            stroke="#e2e8f0"
-            strokeDasharray="2,3"
-            strokeWidth="1"
-          />
-          <text
-            x={padL - 4}
-            y={yAt(yMax) + 3}
-            textAnchor="end"
-            fontSize="9"
-            fill="#94a3b8"
-          >
-            {fmtAxis(yMax)}
-          </text>
-          <text
-            x={padL - 4}
-            y={yAt(yMin) + 3}
-            textAnchor="end"
-            fontSize="9"
-            fill="#94a3b8"
-          >
-            {fmtAxis(yMin)}
-          </text>
-
-          {/* ゼロライン */}
-          {yMin < 0 && yMax > 0 && (
-            <>
-              <line
-                x1={padL}
-                x2={W - padR}
-                y1={zeroY}
-                y2={zeroY}
-                stroke="#64748b"
-                strokeWidth="1"
-              />
-              <text
-                x={padL - 4}
-                y={zeroY + 3}
-                textAnchor="end"
-                fontSize="9"
-                fill="#64748b"
-              >
-                0
-              </text>
-            </>
-          )}
+          {/* Y軸ティック (水平グリッド + ラベル) */}
+          {yTicks.map((v) => {
+            const isZero = v === 0;
+            return (
+              <g key={`yt-${v}`}>
+                <line
+                  x1={padL}
+                  x2={W - padR}
+                  y1={yAt(v)}
+                  y2={yAt(v)}
+                  stroke={isZero ? '#94a3b8' : '#e2e8f0'}
+                  strokeDasharray={isZero ? undefined : '2,3'}
+                  strokeWidth={isZero ? 1 : 0.8}
+                />
+                <text
+                  x={padL - 4}
+                  y={yAt(v) + 3}
+                  textAnchor="end"
+                  fontSize="9"
+                  fill={isZero ? '#64748b' : '#94a3b8'}
+                >
+                  {fmtAxis(v)}
+                </text>
+              </g>
+            );
+          })}
 
           {/* 日付の縦グリッド (7日刻み + 末日のみ・薄め) */}
           {Array.from({ length: lastDay }, (_, i) => i + 1)
@@ -324,7 +322,14 @@ export default function ProfitChart({ records, machines }) {
             ))}
 
           {/* 期待値ライン (先に描画して収支を上に重ねる) */}
-          <path d={evPath} fill="none" stroke={EV_COLOR} strokeWidth="1.8" />
+          <path
+            d={evPath}
+            fill="none"
+            stroke={EV_COLOR}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
           {series.map((s) => (
             <circle
               key={`ev-${s.day}`}
@@ -336,7 +341,14 @@ export default function ProfitChart({ records, machines }) {
           ))}
 
           {/* 収支ライン */}
-          <path d={profitPath} fill="none" stroke={PROFIT_COLOR} strokeWidth="1.8" />
+          <path
+            d={profitPath}
+            fill="none"
+            stroke={PROFIT_COLOR}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
           {series.map((s) => (
             <circle
               key={`p-${s.day}`}
