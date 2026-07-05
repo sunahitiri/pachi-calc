@@ -7,35 +7,58 @@
 //   2. プロキシ→Wayback Machine のスナップショット (archive.org はプロキシを弾かない)
 //   3. プロキシ→DMM 直接 (通ればラッキー程度の保険)
 
-const waybackUrl = (url) => `https://web.archive.org/web/2id_/${url}`;
+// CORSプロキシのラッパー (対象URLをプロキシ経由のURLへ変換)
+const PROXY_WRAPPERS = [
+  {
+    name: 'allorigins',
+    wrap: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  },
+  {
+    name: 'codetabs',
+    wrap: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+  },
+];
 
-// 取得経路定義: { name, build(url) -> fetchUrl, extract(response) -> Promise<htmlString> }
+const fetchText = async (fetchUrl, signal) => {
+  const res = await fetch(fetchUrl, {
+    signal,
+    headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+};
+
+// Wayback Machine のスナップショットをプロキシ経由で取得する。
+// `web/2id_/` 形式のリダイレクトURLはプロキシが追ってくれない (空レスポンスになる) ため、
+// まず available API で具体的なスナップショットURLを解決してから本体を取得する2段方式。
+async function fetchViaWayback(wrap, url, signal) {
+  const availJson = await fetchText(
+    wrap(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`),
+    signal
+  );
+  const snapUrl = JSON.parse(availJson)?.archived_snapshots?.closest?.url;
+  if (!snapUrl) throw new Error('Waybackにスナップショットがありません');
+  // id_ フラグで Wayback のツールバー無しの原本HTMLを取得
+  const rawUrl = snapUrl
+    .replace(/^http:/, 'https:')
+    .replace(/\/web\/(\d+)\//, '/web/$1id_/');
+  return fetchText(wrap(rawUrl), signal);
+}
+
+// 取得経路定義: { name, run(url, signal) -> Promise<htmlString> }
 const SOURCES = [
   {
     name: 'jina-reader',
-    build: (url) => `https://r.jina.ai/${url}`,
-    extract: (res) => res.text(),
+    run: (url, signal) => fetchText(`https://r.jina.ai/${url}`, signal),
   },
-  {
-    name: 'allorigins→wayback',
-    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(waybackUrl(url))}`,
-    extract: (res) => res.text(),
-  },
-  {
-    name: 'codetabs→wayback',
-    build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(waybackUrl(url))}`,
-    extract: (res) => res.text(),
-  },
-  {
-    name: 'allorigins→dmm',
-    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    extract: (res) => res.text(),
-  },
-  {
-    name: 'codetabs→dmm',
-    build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
-    extract: (res) => res.text(),
-  },
+  ...PROXY_WRAPPERS.map((p) => ({
+    name: `${p.name}→wayback`,
+    run: (url, signal) => fetchViaWayback(p.wrap, url, signal),
+  })),
+  ...PROXY_WRAPPERS.map((p) => ({
+    name: `${p.name}→dmm`,
+    run: (url, signal) => fetchText(p.wrap(url), signal),
+  })),
 ];
 
 const URL_PATTERN = /^https?:\/\/p-town\.dmm\.com\/machines\/\d+/;
@@ -96,8 +119,30 @@ export function parseSpec(html, sourceUrl = '') {
 
 // 1経路あたりの待ち時間上限。ハングする経路を切り捨てる
 const FETCH_TIMEOUT_MS = 20000;
-// 再試行までの待ち時間
-const RETRY_DELAY_MS = 800;
+// 再試行までの待ち時間 (レート制限に当たった場合に少し置いてから再試行)
+const RETRY_DELAY_MS = 1500;
+
+// 一度取得に成功したスペックの localStorage キャッシュ。
+// 機種スペックは変わらないため、同じURLの再取得はネットワーク不要で即時成功させる。
+const CACHE_KEY = 'pachi-dmm-spec-cache';
+
+function readSpecCache() {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSpecCache(url, spec) {
+  try {
+    const cache = readSpecCache();
+    cache[url] = { spec, at: Date.now() };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // 容量超過等は無視 (キャッシュは必須ではない)
+  }
+}
 
 export async function fetchDmmMachine(url) {
   if (!url || typeof url !== 'string') {
@@ -110,8 +155,12 @@ export async function fetchDmmMachine(url) {
     );
   }
 
-  // 全プロキシへ同時にリクエストし、最初にスペック抽出まで成功したものを採用する。
-  // (逐次だと死んでいるプロキシ1つで数十秒待たされるため)
+  // 過去に成功したURLはキャッシュから即返す (スペックは不変)
+  const cached = readSpecCache()[trimmed];
+  if (cached?.spec) return cached.spec;
+
+  // 全経路へ同時にリクエストし、最初にスペック抽出まで成功したものを採用する。
+  // (逐次だと死んでいる経路1つで数十秒待たされるため)
   const controllers = SOURCES.map(() => new AbortController());
   const failures = [];
 
@@ -127,12 +176,7 @@ export async function fetchDmmMachine(url) {
           if (controller.signal.aborted) break;
         }
         try {
-          const res = await fetch(source.build(trimmed), {
-            signal: controller.signal,
-            headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const html = await source.extract(res);
+          const html = await source.run(trimmed, controller.signal);
           if (!html || html.length < 1000) {
             throw new Error(`レスポンスが空または短すぎ (${html?.length ?? 0}文字)`);
           }
@@ -160,10 +204,11 @@ export async function fetchDmmMachine(url) {
     const spec = await Promise.any(attempts);
     // 勝者が決まったら残りのリクエストは打ち切る
     controllers.forEach((c) => c.abort());
+    writeSpecCache(trimmed, spec);
     return spec;
   } catch {
     const err = new Error(
-      `全ての取得経路で失敗しました。\n${failures.join('\n')}\n\n💡 DMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
+      `全ての取得経路で失敗しました。\n${failures.join('\n')}\n\n💡 時間をおくか回線を切り替えて(Wi-Fi⇔モバイル)再試行してください。急ぐ場合はDMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
     );
     err.failures = failures;
     throw err;
@@ -175,5 +220,7 @@ export function parseDmmHtml(html, sourceUrl = '') {
   if (!html || typeof html !== 'string' || html.length < 500) {
     throw new Error('HTMLが短すぎます。ページ全体のソースを貼り付けてください。');
   }
-  return parseSpec(html, sourceUrl);
+  const spec = parseSpec(html, sourceUrl);
+  if (sourceUrl) writeSpecCache(sourceUrl.trim(), spec);
+  return spec;
 }
