@@ -30,19 +30,21 @@ const fetchText = async (fetchUrl, signal) => {
 
 // Wayback Machine のスナップショットをプロキシ経由で取得する。
 // `web/2id_/` 形式のリダイレクトURLはプロキシが追ってくれない (空レスポンスになる) ため、
-// まず available API で具体的なスナップショットURLを解決してから本体を取得する2段方式。
+// まず CDX API で最新スナップショットを解決してから本体を取得する2段方式。
+// ※ available API はスナップショットが存在しても {} を返すことがあり信頼できない (CDX は正確)
 async function fetchViaWayback(wrap, url, signal) {
-  const availJson = await fetchText(
-    wrap(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`),
-    signal
-  );
-  const snapUrl = JSON.parse(availJson)?.archived_snapshots?.closest?.url;
-  if (!snapUrl) throw new Error('Waybackにスナップショットがありません');
+  const cdxUrl =
+    'https://web.archive.org/cdx/search/cdx?output=json&filter=statuscode:200&limit=-1&url=' +
+    encodeURIComponent(url.replace(/^https?:\/\//, ''));
+  const cdxJson = await fetchText(wrap(cdxUrl), signal);
+  // 行形式: [urlkey, timestamp, original, mimetype, statuscode, digest, length]
+  const rows = JSON.parse(cdxJson);
+  const last = Array.isArray(rows) && rows.length >= 2 ? rows[rows.length - 1] : null;
+  const timestamp = last?.[1];
+  const original = last?.[2];
+  if (!timestamp || !original) throw new Error('Waybackにスナップショットがありません');
   // id_ フラグで Wayback のツールバー無しの原本HTMLを取得
-  const rawUrl = snapUrl
-    .replace(/^http:/, 'https:')
-    .replace(/\/web\/(\d+)\//, '/web/$1id_/');
-  return fetchText(wrap(rawUrl), signal);
+  return fetchText(wrap(`https://web.archive.org/web/${timestamp}id_/${original}`), signal);
 }
 
 // 取得経路定義: { name, run(url, signal) -> Promise<htmlString> }

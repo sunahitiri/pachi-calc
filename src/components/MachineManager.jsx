@@ -59,7 +59,8 @@ export default function MachineManager({ machines, setMachines }) {
 
   const applySpecToForm = (spec) => {
     setForm({
-      name: spec.name,
+      // 表示テキスト貼り付け等で機種名が取れなかった場合は空欄にして入力を促す
+      name: spec.name === '名称不明' ? '' : spec.name,
       probability: spec.probability.toString(),
       averagePayout: spec.averagePayout.toString(),
       notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
@@ -371,18 +372,25 @@ export default function MachineManager({ machines, setMachines }) {
           {showDmmPaste && (
             <div className="mt-2 space-y-2 border-t border-purple-300 dark:border-purple-700 pt-2">
               <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-                <div className="font-semibold mb-1">📖 403エラー回避の手順</div>
+                <div className="font-semibold mb-1">📖 自動取得に失敗するときの手順</div>
                 <ol className="list-decimal list-inside space-y-0.5">
                   <li>ブラウザでDMMページを開く（上のURL）</li>
-                  <li>ページ上で右クリック →「ページのソースを表示」</li>
-                  <li>Ctrl+A で全選択 → Ctrl+C でコピー</li>
-                  <li>下の枠に貼り付け（Ctrl+V）→ 解析ボタン</li>
+                  <li>
+                    ページの文章を全選択してコピー
+                    <span className="text-slate-500 dark:text-slate-400">
+                      （iPhone: 文字を長押し→「すべてを選択」→コピー / PC: Ctrl+A→Ctrl+C）
+                    </span>
+                  </li>
+                  <li>下の枠に貼り付け → 解析ボタン</li>
                 </ol>
+                <div className="mt-1 text-slate-500 dark:text-slate-400">
+                  ※ HTMLソースでも、表示されている文章のコピーでもOKです
+                </div>
               </div>
               <textarea
                 value={dmmHtml}
                 onChange={(e) => setDmmHtml(e.target.value)}
-                placeholder="<!doctype html>..... ページ全体のHTMLを貼り付けてください"
+                placeholder="DMMページの文章 (全選択コピー) か HTMLソースを貼り付けてください"
                 rows={5}
                 className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-xs font-mono"
               />
