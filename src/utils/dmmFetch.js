@@ -1,34 +1,39 @@
 // DMM P-townから機種スペックを自動取得
-// CORSを回避するため複数の公開プロキシを順番に試す
+//
+// 注意: p-town.dmm.com は CloudFront でデータセンターIPをブロックしているため、
+// 一般的な公開CORSプロキシ経由の直接取得はほぼ 403 で失敗する。
+// そのため以下の経路を全部同時に試し、最初にスペック抽出まで成功したものを採用する:
+//   1. r.jina.ai      -- 実ブラウザでレンダリングして本文テキストを返すリーダー (CORS対応)
+//   2. プロキシ→Wayback Machine のスナップショット (archive.org はプロキシを弾かない)
+//   3. プロキシ→DMM 直接 (通ればラッキー程度の保険)
 
-// プロキシ定義: { name, build(url) -> proxyUrl, extract(response) -> Promise<htmlString> }
-const PROXIES = [
+const waybackUrl = (url) => `https://web.archive.org/web/2id_/${url}`;
+
+// 取得経路定義: { name, build(url) -> fetchUrl, extract(response) -> Promise<htmlString> }
+const SOURCES = [
   {
-    name: 'allorigins',
+    name: 'jina-reader',
+    build: (url) => `https://r.jina.ai/${url}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'allorigins→wayback',
+    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(waybackUrl(url))}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'codetabs→wayback',
+    build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(waybackUrl(url))}`,
+    extract: (res) => res.text(),
+  },
+  {
+    name: 'allorigins→dmm',
     build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     extract: (res) => res.text(),
   },
   {
-    name: 'allorigins-get',
-    build: (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    extract: async (res) => {
-      const json = await res.json();
-      return json?.contents || '';
-    },
-  },
-  {
-    name: 'codetabs',
+    name: 'codetabs→dmm',
     build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
-    extract: (res) => res.text(),
-  },
-  {
-    name: 'corsproxy.io',
-    build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    extract: (res) => res.text(),
-  },
-  {
-    name: 'thingproxy',
-    build: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     extract: (res) => res.text(),
   },
 ];
@@ -41,9 +46,14 @@ export function parseSpec(html, sourceUrl = '') {
   const bodyText = (doc.body?.textContent || '').replace(/\s+/g, ' ').trim();
 
   // 機種名: <title> から抽出（「（」より前）
-  const title = doc.querySelector('title')?.textContent || '';
+  // jina-reader 経由の場合は HTML ではなく "Title: ○○" 行を含むテキストが来る
+  const title =
+    doc.querySelector('title')?.textContent ||
+    html.match(/^Title:\s*(.+)$/m)?.[1] ||
+    '';
+  // 「・」は機種名自体に含まれることが多いので区切り文字にしない
   const name =
-    title.split(/[（(・|｜]/)[0]?.trim() ||
+    title.split(/[（(|｜]/)[0]?.trim() ||
     doc.querySelector('h1')?.textContent?.trim() ||
     '名称不明';
 
@@ -84,32 +94,10 @@ export function parseSpec(html, sourceUrl = '') {
   };
 }
 
-// 複数プロキシを順番に試す。全プロキシの失敗理由をまとめてエラーに含める。
-async function fetchHtml(url) {
-  const failures = [];
-  for (const proxy of PROXIES) {
-    try {
-      const proxyUrl = proxy.build(url);
-      const res = await fetch(proxyUrl, {
-        headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
-      });
-      if (!res.ok) {
-        failures.push(`${proxy.name}: HTTP ${res.status}`);
-        continue;
-      }
-      const html = await proxy.extract(res);
-      if (html && html.length > 1000) return html;
-      failures.push(`${proxy.name}: レスポンスが空または短すぎ (${html?.length ?? 0}文字)`);
-    } catch (e) {
-      failures.push(`${proxy.name}: ${e.message || e}`);
-    }
-  }
-  const err = new Error(
-    `全てのプロキシで取得に失敗しました。\n${failures.join('\n')}\n\n💡 DMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
-  );
-  err.failures = failures;
-  throw err;
-}
+// 1経路あたりの待ち時間上限。ハングする経路を切り捨てる
+const FETCH_TIMEOUT_MS = 20000;
+// 再試行までの待ち時間
+const RETRY_DELAY_MS = 800;
 
 export async function fetchDmmMachine(url) {
   if (!url || typeof url !== 'string') {
@@ -121,8 +109,65 @@ export async function fetchDmmMachine(url) {
       'DMM P-townの機種ページURL（https://p-town.dmm.com/machines/数字）を入力してください'
     );
   }
-  const html = await fetchHtml(trimmed);
-  return parseSpec(html, trimmed);
+
+  // 全プロキシへ同時にリクエストし、最初にスペック抽出まで成功したものを採用する。
+  // (逐次だと死んでいるプロキシ1つで数十秒待たされるため)
+  const controllers = SOURCES.map(() => new AbortController());
+  const failures = [];
+
+  const attempts = SOURCES.map(async (source, i) => {
+    const controller = controllers[i];
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      let lastErr = null;
+      // 無料プロキシは単発で失敗することが多いので、経路ごとに1回だけ再試行する
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          if (controller.signal.aborted) break;
+        }
+        try {
+          const res = await fetch(source.build(trimmed), {
+            signal: controller.signal,
+            headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const html = await source.extract(res);
+          if (!html || html.length < 1000) {
+            throw new Error(`レスポンスが空または短すぎ (${html?.length ?? 0}文字)`);
+          }
+          // エラーページ等を成功扱いしないよう、スペック抽出の成功までをこの経路の成功条件にする
+          return parseSpec(html, trimmed);
+        } catch (e) {
+          lastErr = e;
+          if (e?.name === 'AbortError') break;
+          // 本文は取得できたのにスペックが無い場合は再試行しても無意味 (パチスロ機ページ等)
+          if (String(e?.message || '').startsWith('スペック情報')) break;
+        }
+      }
+      throw lastErr || new Error('中断されました');
+    } catch (e) {
+      const msg =
+        e?.name === 'AbortError' ? `タイムアウト (${FETCH_TIMEOUT_MS / 1000}秒)` : e?.message || String(e);
+      failures.push(`${source.name}: ${msg}`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  try {
+    const spec = await Promise.any(attempts);
+    // 勝者が決まったら残りのリクエストは打ち切る
+    controllers.forEach((c) => c.abort());
+    return spec;
+  } catch {
+    const err = new Error(
+      `全ての取得経路で失敗しました。\n${failures.join('\n')}\n\n💡 DMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
+    );
+    err.failures = failures;
+    throw err;
+  }
 }
 
 // 手動貼り付け用: HTMLとURL(任意)からスペック抽出
