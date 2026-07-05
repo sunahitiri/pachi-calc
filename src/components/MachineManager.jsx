@@ -35,7 +35,10 @@ export default function MachineManager({ machines, setMachines }) {
     probability: '',
     averagePayout: '',
     notes: '',
+    sourceUrl: '',
   });
+  // ドラッグ(長押し並べ替え)直後の click でリンクを開かないようにするフラグ
+  const suppressClickRef = useRef(false);
 
   // DMM URL取得用
   const [showDmmInput, setShowDmmInput] = useState(false);
@@ -46,7 +49,7 @@ export default function MachineManager({ machines, setMachines }) {
   const [dmmHtml, setDmmHtml] = useState('');
 
   const resetForm = () => {
-    setForm({ name: '', probability: '', averagePayout: '', notes: '' });
+    setForm({ name: '', probability: '', averagePayout: '', notes: '', sourceUrl: '' });
     setEditing(null);
     setShowForm(false);
     setDmmError('');
@@ -60,6 +63,7 @@ export default function MachineManager({ machines, setMachines }) {
       probability: spec.probability.toString(),
       averagePayout: spec.averagePayout.toString(),
       notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
+      sourceUrl: spec.sourceUrl || '',
     });
     setEditing(null);
     setShowForm(true);
@@ -76,6 +80,7 @@ export default function MachineManager({ machines, setMachines }) {
       averagePayout: Number(form.averagePayout),
       exchangeRate: 4, // 機種情報は常に 1玉=4円 基準で保存
       notes: form.notes,
+      sourceUrl: form.sourceUrl.trim(),
     };
     if (editing) {
       setMachines(machines.map((m) => (m.id === editing.id ? data : m)));
@@ -92,6 +97,7 @@ export default function MachineManager({ machines, setMachines }) {
       probability: m.probability?.toString() || '',
       averagePayout: m.averagePayout?.toString() || '',
       notes: m.notes || '',
+      sourceUrl: m.sourceUrl || '',
     });
     setShowForm(true);
     // フォームが編集対象のカード直下に挿入されるので、画面内に収まるよう少しスクロール
@@ -189,9 +195,19 @@ export default function MachineManager({ machines, setMachines }) {
 
   const handleCardPointerUp = () => {
     cancelPress();
+    // 長押し(並べ替え)後に発火する click ではリンクを開かない
+    if (draggingId) suppressClickRef.current = true;
     setDraggingId(null);
     setDragDy(0);
     dragInfoRef.current = null;
+  };
+
+  const handleCardClick = (m) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    if (m.sourceUrl) window.open(m.sourceUrl, '_blank', 'noopener');
   };
 
   const handleDmmPaste = () => {
@@ -253,6 +269,13 @@ export default function MachineManager({ machines, setMachines }) {
         placeholder="メモ"
         value={form.notes}
         onChange={(e) => setForm({ ...form, notes: e.target.value })}
+        className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
+      />
+      <input
+        type="url"
+        placeholder="DMMリンク (任意・カードのタップで開く)"
+        value={form.sourceUrl}
+        onChange={(e) => setForm({ ...form, sourceUrl: e.target.value })}
         className="w-full px-2 py-1.5 border border-slate-300 rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white text-sm"
       />
       <div className="flex gap-2">
@@ -409,6 +432,7 @@ export default function MachineManager({ machines, setMachines }) {
                 onPointerDown={(e) => handleCardPointerDown(m.id, e)}
                 onPointerMove={handleCardPointerMove}
                 onPointerUp={handleCardPointerUp}
+                onClick={() => handleCardClick(m)}
                 onPointerCancel={handleCardPointerUp}
                 onPointerLeave={(e) => {
                   // ドラッグ中以外は、要素外に出たら長押しタイマーをキャンセル
@@ -433,7 +457,12 @@ export default function MachineManager({ machines, setMachines }) {
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <div className="font-medium text-slate-900 dark:text-white text-sm">{m.name}</div>
+                    <div className="font-medium text-slate-900 dark:text-white text-sm">
+                      {m.name}
+                      {m.sourceUrl && (
+                        <span className="ml-1 text-xs" title="タップでDMMページを開く">🔗</span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
                       <span>1/{m.probability} / 平均{m.averagePayout}発 / {m.exchangeRate}円</span>
                       <span className="text-blue-600 dark:text-blue-400">B:{border.toFixed(1)}</span>
@@ -448,14 +477,20 @@ export default function MachineManager({ machines, setMachines }) {
                   <div className="flex gap-1">
                     <button
                       onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => (isEditingThis ? resetForm() : handleEdit(m))}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        isEditingThis ? resetForm() : handleEdit(m);
+                      }}
                       className="text-blue-600 dark:text-blue-400 text-xs px-2 py-1"
                     >
                       {isEditingThis ? '閉じる' : '編集'}
                     </button>
                     <button
                       onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => handleDelete(m.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(m.id);
+                      }}
                       className="text-red-500 text-xs px-2 py-1"
                     >
                       削除
