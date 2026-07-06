@@ -4,6 +4,10 @@ import { fetchDmmMachine, parseDmmHtml } from '../utils/dmmFetch';
 import DataMigration from './DataMigration';
 
 export default function MachineManager({ machines, setMachines }) {
+  // 削除済み機種は一覧に表示しない。過去の記録が machineId で参照しており、
+  // 配列から物理削除すると期待値・機種名が算出できなくなるため、
+  // deleted フラグによる非表示 (アーカイブ) としてデータ自体は保持する。
+  const visibleMachines = machines.filter((m) => !m.deleted);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -108,8 +112,13 @@ export default function MachineManager({ machines, setMachines }) {
   };
 
   const handleDelete = (id) => {
-    if (confirm('この機種を削除しますか？')) {
-      setMachines(machines.filter((m) => m.id !== id));
+    if (confirm('この機種を削除しますか？\n（この機種の過去の遊戯記録・期待値はそのまま残ります）')) {
+      setMachines(
+        machines.map((m) =>
+          m.id === id ? { ...m, deleted: true, deletedAt: new Date().toISOString() } : m
+        )
+      );
+      if (editing?.id === id) resetForm();
     }
   };
 
@@ -150,7 +159,7 @@ export default function MachineManager({ machines, setMachines }) {
     } catch { /* noop */ }
     const startY = e.clientY;
     pressTimerRef.current = setTimeout(() => {
-      const originIdx = machines.findIndex((m) => m.id === id);
+      const originIdx = visibleMachines.findIndex((m) => m.id === id);
       const cardEl = cardRefs.current[id];
       // 1 スロット分の縦移動量 = カード高さ + space-y-2 の 8px
       const cardFullH = cardEl ? cardEl.offsetHeight + 8 : 80;
@@ -174,12 +183,12 @@ export default function MachineManager({ machines, setMachines }) {
     // 指の移動量を反映 (カードの translateY に使用)
     setDragDy(e.clientY - dragInfoRef.current.startY);
 
-    const fromIdx = machines.findIndex((m) => m.id === draggingId);
+    const fromIdx = visibleMachines.findIndex((m) => m.id === draggingId);
     if (fromIdx < 0) return;
     let toIdx = fromIdx;
-    for (let i = 0; i < machines.length; i++) {
-      if (machines[i].id === draggingId) continue;
-      const el = cardRefs.current[machines[i].id];
+    for (let i = 0; i < visibleMachines.length; i++) {
+      if (visibleMachines[i].id === draggingId) continue;
+      const el = cardRefs.current[visibleMachines[i].id];
       if (!el) continue;
       const r = el.getBoundingClientRect();
       const mid = r.top + r.height / 2;
@@ -187,10 +196,11 @@ export default function MachineManager({ machines, setMachines }) {
       if (e.clientY > mid && i > fromIdx && i > toIdx) toIdx = i;
     }
     if (toIdx !== fromIdx) {
-      const next = [...machines];
+      const next = [...visibleMachines];
       const [moved] = next.splice(fromIdx, 1);
       next.splice(toIdx, 0, moved);
-      setMachines(next);
+      // 削除済み (非表示) 機種は末尾に付けて保持
+      setMachines([...next, ...machines.filter((m) => m.deleted)]);
     }
   };
 
@@ -413,7 +423,7 @@ export default function MachineManager({ machines, setMachines }) {
       {showForm && !editing && renderForm(false)}
 
       <div ref={listRef} className="space-y-2">
-        {machines.map((m, i) => {
+        {visibleMachines.map((m, i) => {
           const border = calcBorder(m);
           const hourlyBorder = calcHourlyBorder(m);
           const isEditing = editing?.id === m.id;
