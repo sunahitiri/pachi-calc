@@ -101,16 +101,21 @@ export default function SessionRecorder({ machines, onComplete }) {
   // session が null = 未開始(idle)、それ以外は phase: 'playing' | 'hit-input'
   const [session, setSession] = useLocalStorage('pachi-active-session', null);
 
+  // 削除 (アーカイブ) 済み機種は新規セッションの選択肢に出さない。
+  // 進行中セッションや過去記録の参照 (machines.find) は全リストのまま行う。
+  const selectableMachines = machines.filter((m) => !m.deleted);
+
   // ====== idle: 開始フォーム ======
   const [startDate, setStartDate] = useState(todayStr());
   const [startExchangeId, setStartExchangeId] = useState(DEFAULT_EXCHANGE_ID);
-  const [startMachineId, setStartMachineId] = useState(machines[0]?.id || '');
+  const [startMachineId, setStartMachineId] = useState(selectableMachines[0]?.id || '');
   const [startRotInput, setStartRotInput] = useState('');
   const [startBallsInput, setStartBallsInput] = useState('');
   const [startNotesInput, setStartNotesInput] = useState('');
 
   const handleStart = () => {
-    if (!startMachineId) return;
+    // 選択後に機種が削除された場合など、選択肢に無い機種では開始しない
+    if (!selectableMachines.some((m) => m.id === startMachineId)) return;
     const startRotations = numOr(startRotInput, 0);
     const startBalls = numOr(startBallsInput, 0);
     const exchangeOpt = EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0];
@@ -372,7 +377,7 @@ export default function SessionRecorder({ machines, onComplete }) {
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">機種</label>
           <MachineSelector
-            machines={machines}
+            machines={selectableMachines}
             value={startMachineId}
             onChange={setStartMachineId}
             exchangeRate={(EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0]).rate}
@@ -415,7 +420,7 @@ export default function SessionRecorder({ machines, onComplete }) {
         </div>
         <button
           onClick={handleStart}
-          disabled={!startMachineId}
+          disabled={!selectableMachines.some((m) => m.id === startMachineId)}
           className="w-full bg-blue-600 disabled:opacity-50 text-white py-3 rounded-lg font-bold hover:bg-blue-700 active:bg-blue-800 transition"
         >
           ▶ 遊戯開始
