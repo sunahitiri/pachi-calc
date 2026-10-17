@@ -183,6 +183,48 @@ describe('取得APIの制限', () => {
     expect(upstream.mock.calls[0][1].redirect).toBe('manual');
   });
 
+  it('一時的な403は1秒後に1回だけ再試行する', async () => {
+    vi.useFakeTimers();
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(new Response('Forbidden', { status: 403 }))
+      .mockResolvedValueOnce(new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+    const pending = handleDmmRequest(request(), {}, upstream);
+    await vi.advanceTimersByTimeAsync(1000);
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect((await response.json()).sourceUrl).toBe(SOURCE_URL);
+    expect(upstream).toHaveBeenCalledTimes(2);
+  });
+
+  it('成功したページをAPI側に保存し、次の端末の取得ではDMMへ接続しない', async () => {
+    let stored;
+    const cache = {
+      match: vi.fn(async () => stored?.clone()),
+      put: vi.fn(async (_, response) => { stored = response; }),
+    };
+    vi.stubGlobal('caches', { default: cache });
+    const upstream = vi.fn(async () => new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+    const first = await handleDmmRequest(request(), {}, upstream);
+    const second = await handleDmmRequest(request(), {}, upstream);
+    expect((await first.json()).sourceUrl).toBe(SOURCE_URL);
+    expect((await second.json()).html).toBe(html);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(cache.put).toHaveBeenCalledTimes(1);
+    expect(stored.headers.get('Cache-Control')).toBe('public, max-age=86400');
+    expect(second.headers.get('Access-Control-Allow-Origin')).toBe(APP_ORIGIN);
+    expect(second.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('レート制限は再試行せず、失敗したページもキャッシュしない', async () => {
+    const cache = { match: vi.fn(), put: vi.fn() };
+    vi.stubGlobal('caches', { default: cache });
+    const upstream = vi.fn(async () => new Response('Rate limited', { status: 429 }));
+    const response = await handleDmmRequest(request(), {}, upstream);
+    expect(response.status).toBe(502);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(cache.put).not.toHaveBeenCalled();
+  });
+
   it('APIのタイムアウトでDMMへの通信を中断する', async () => {
     vi.useFakeTimers();
     const upstream = vi.fn((_, { signal }) => new Promise((resolve, reject) => {

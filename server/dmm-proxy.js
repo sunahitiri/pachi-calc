@@ -41,20 +41,47 @@ export async function handleDmmRequest(request, env = {}, fetcher = globalThis.f
   }
 
   const sourceUrl = `${DMM_ORIGIN}/machines/${match[1]}`;
+  const cache = globalThis.caches?.default;
+  const cacheKey = new Request(`${url.origin}${url.pathname}`);
+  if (cache) {
+    try {
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        const payload = await cached.json();
+        if (payload.sourceUrl === sourceUrl && typeof payload.html === 'string') {
+          return json(payload);
+        }
+      }
+    } catch {
+      // キャッシュに障害があってもDMMからの取得を試す。
+    }
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     // 入力されたURLやCookieは転送せず、固定ドメインの機種ページだけを読む。
-    const upstream = await fetcher(sourceUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/html,application/xhtml+xml',
-        'User-Agent': 'pachi-calc/1.0',
-      },
-      // Workersはredirect: 'error'に未対応。転送先を追わず3xxを取得エラーにする。
-      redirect: 'manual',
-      signal: controller.signal,
-    });
+    let upstream;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      upstream = await fetcher(sourceUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'User-Agent': 'pachi-calc/1.0',
+        },
+        // Workersはredirect: 'error'に未対応。転送先を追わず3xxを取得エラーにする。
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      // 正常に取得できる公開ページでも一時的に403になることがある。
+      // 再試行は1回に限定し、429（レート制限）は繰り返さない。
+      if (attempt === 0 && [403, 502, 503, 504].includes(upstream.status)) {
+        await upstream.body?.cancel();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      break;
+    }
     if (!upstream.ok) {
       const error = upstream.status === 404
         ? 'DMMにこの機種ページが見つかりません。URLを確認してください。'
@@ -75,7 +102,17 @@ export async function handleDmmRequest(request, env = {}, fetcher = globalThis.f
       return json({ error: '機種ページのサイズが大きすぎるため取得を中断しました。' }, 502);
     }
     // HTMLはJSONの文字列として返し、このAPI上では実行・表示しない。
-    return json({ html, sourceUrl });
+    const payload = { html, sourceUrl };
+    if (cache) {
+      try {
+        await cache.put(cacheKey, new Response(JSON.stringify(payload), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=86400' },
+        }));
+      } catch {
+        // キャッシュ保存の失敗を取得エラーにはしない。
+      }
+    }
+    return json(payload);
   } catch (error) {
     console.warn('DMM fetch failed:', error instanceof Error ? error.message : 'Unknown error');
     return json({
