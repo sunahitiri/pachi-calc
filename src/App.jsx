@@ -1,177 +1,50 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import BottomNav from './components/BottomNav';
 import SessionRecorder from './components/SessionRecorder';
 import RecordList from './components/RecordList';
 import BalanceSheet from './components/BalanceSheet';
 import ProfitChart from './components/ProfitChart';
 import MachineManager from './components/MachineManager';
+import { PageHeader } from './components/ui/Ui';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import defaultMachines from './data/machines.json';
 
-const TABS = ['record', 'list', 'balance', 'chart', 'machines'];
+const TABS = ['record', 'list', 'balance', 'machines'];
 
 function App() {
   const [tab, setTab] = useState('record');
+  const [insight, setInsight] = useState('balance');
   const [records, setRecords] = useLocalStorage('pachi-records', []);
   const [machines, setMachines] = useLocalStorage('pachi-machines', defaultMachines);
+  const handleAdd = record => setRecords(prev => [record, ...prev]);
+  const handleDelete = id => setRecords(prev => prev.filter(r => r.id !== id));
+  const handleUpdate = updated => setRecords(prev => prev.map(r => r.id === updated.id ? updated : r));
 
-  const idx = TABS.indexOf(tab);
-  const [dragDx, setDragDx] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const touchRef = useRef(null);
-  const containerRef = useRef(null);
-
-  const handleAdd = (record) => {
-    setRecords([record, ...records]);
-    // セッション終了後は記録タブの開始画面に留まる
-  };
-
-  const handleDelete = (id) => {
-    setRecords(records.filter((r) => r.id !== id));
-  };
-
-  const handleUpdate = (updated) => {
-    setRecords(records.map((r) => (r.id === updated.id ? updated : r)));
-  };
-
-  // --- 指に追随するタブ切替 (iPhone ホーム画面風) ---
-  // 画面のどこでもスワイプでタブ切替できるよう、入力要素/ボタン上でも検出する。
-  // 通常のタップ・縦スクロール・横スワイプは handleTouchMove 内の 8px 方向ロックで区別する。
-  const handleTouchStart = (e) => {
-    // モーダル/ダイアログ内のタッチはタブ切替の対象外
-    // (機種選択ダイアログ等で項目タップが横スワイプと誤判定されるのを防ぐ)
-    if (e.target && e.target.closest && e.target.closest('[role="dialog"], [data-no-swipe]')) {
-      touchRef.current = null;
-      return;
-    }
-    const t = e.touches[0];
-    touchRef.current = {
-      x: t.clientX,
-      y: t.clientY,
-      t: Date.now(),
-      locked: null, // 'x' | 'y' | null
-      width: containerRef.current?.offsetWidth || window.innerWidth,
-    };
-  };
-
-  const handleTouchMove = (e) => {
-    if (!touchRef.current) return;
-    const t = e.touches[0];
-    const dx = t.clientX - touchRef.current.x;
-    const dy = t.clientY - touchRef.current.y;
-
-    // 初期の 8px で方向をロック (縦スクロール / 横スワイプを排他的に判定)
-    if (!touchRef.current.locked) {
-      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-        touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-        if (touchRef.current.locked === 'x') setIsDragging(true);
-      }
-    }
-
-    if (touchRef.current.locked === 'x') {
-      // 端では引き戻し (ラバーバンド)
-      let effDx = dx;
-      if ((idx === 0 && dx > 0) || (idx === TABS.length - 1 && dx < 0)) {
-        effDx = dx * 0.3;
-      }
-      setDragDx(effDx);
-    }
-  };
-
-  const handleTouchEnd = (e) => {
-    if (!touchRef.current) return;
-    const { locked, t: startTime, width } = touchRef.current;
-    touchRef.current = null;
-
-    if (locked !== 'x') {
-      setDragDx(0);
-      setIsDragging(false);
-      return;
-    }
-    // 横スワイプが成立したときは、指を離したタイミングで発火する click を抑止
-    // (入力欄の上からスワイプを始めてボタンの上で離した際の誤押下を防ぐ)
-    if (e && e.cancelable) e.preventDefault();
-
-    const duration = Math.max(1, Date.now() - startTime);
-    const velocity = dragDx / duration; // px/ms
-    const distanceThreshold = width * 0.25;
-    const velocityThreshold = 0.4; // px/ms (フリック判定)
-
-    let newIdx = idx;
-    if (
-      (dragDx < -distanceThreshold || velocity < -velocityThreshold) &&
-      idx < TABS.length - 1
-    ) {
-      newIdx = idx + 1;
-    } else if (
-      (dragDx > distanceThreshold || velocity > velocityThreshold) &&
-      idx > 0
-    ) {
-      newIdx = idx - 1;
-    }
-
-    setIsDragging(false);
-    setDragDx(0);
-    if (newIdx !== idx) setTab(TABS[newIdx]);
-  };
-
-  const tabPanels = [
-    <SessionRecorder key="record" machines={machines} onComplete={handleAdd} />,
-    <RecordList
-      key="list"
-      records={records}
-      machines={machines}
-      onDelete={handleDelete}
-      onUpdate={handleUpdate}
-    />,
-    <BalanceSheet key="balance" records={records} machines={machines} />,
-    <ProfitChart key="chart" records={records} machines={machines} />,
-    <MachineManager key="machines" machines={machines} setMachines={setMachines} />,
-  ];
-
-  return (
-    <div
-      className="flex flex-col max-w-lg mx-auto bg-slate-50 dark:bg-slate-900 overflow-hidden"
-      style={{
-        // iOS PWA standalone では 100dvh が safe-area-inset-bottom を除外するため、
-        // 明示的に足し戻してナビ下端が実際のスクリーン下端まで届くようにする。
-        // Safari (browser) では env(safe-area-inset-bottom) = 0 なので影響なし。
-        height: 'calc(100dvh + env(safe-area-inset-bottom, 0px))',
-        // iPhone のカメラ/ノッチ領域に被らないよう上端の safe-area を確保
-        paddingTop: 'env(safe-area-inset-top, 0px)',
-      }}
-    >
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-hidden relative touch-pan-y"
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchEnd}
-      >
-        <div
-          className={`flex h-full ${
-            isDragging ? '' : 'transition-transform duration-300 ease-out'
-          }`}
-          style={{
-            width: `${TABS.length * 100}%`,
-            transform: `translate3d(calc(${-idx * (100 / TABS.length)}% + ${dragDx}px), 0, 0)`,
-          }}
-        >
-          {tabPanels.map((panel, i) => (
-            <div
-              key={TABS[i]}
-              className="flex-shrink-0 h-full overflow-y-auto pb-8"
-              style={{ width: `${100 / TABS.length}%` }}
-            >
-              {panel}
-            </div>
-          ))}
+  // パネルを維持し、タブを移動しても入力途中の値を残す。
+  return <div className="app-shell">
+    <main className="app-main">
+      <section id="panel-record" aria-label="記録" className="tab-panel" hidden={tab !== 'record'}>
+        <SessionRecorder machines={machines} onComplete={handleAdd} onManageMachines={() => setTab('machines')} />
+      </section>
+      <section id="panel-list" aria-label="履歴" className="tab-panel" hidden={tab !== 'list'}>
+        <RecordList records={records} machines={machines} onDelete={handleDelete} onUpdate={handleUpdate} onNewRecord={() => setTab('record')} />
+      </section>
+      <section id="panel-balance" aria-label="収支" className="tab-panel" hidden={tab !== 'balance'}>
+        <div className="page insights-header"><PageHeader eyebrow="INSIGHTS" title="収支を振り返る" description="記録から、日々の変化を見つける。" />
+          <div className="segmented-control" aria-label="収支の表示方法">
+            <button type="button" aria-pressed={insight === 'balance'} onClick={() => setInsight('balance')}>収支表</button>
+            <button type="button" aria-pressed={insight === 'chart'} onClick={() => setInsight('chart')}>チャート</button>
+          </div>
         </div>
-      </div>
-      <BottomNav tab={tab} setTab={setTab} tabs={TABS} />
-    </div>
-  );
+        <div hidden={insight !== 'balance'}><BalanceSheet records={records} machines={machines} /></div>
+        <div hidden={insight !== 'chart'}><ProfitChart records={records} machines={machines} /></div>
+      </section>
+      <section id="panel-machines" aria-label="機種" className="tab-panel legacy-panel" hidden={tab !== 'machines'}>
+        <MachineManager machines={machines} setMachines={setMachines} />
+      </section>
+    </main>
+    <BottomNav tab={tab} setTab={setTab} tabs={TABS} />
+  </div>;
 }
 
 export default App;

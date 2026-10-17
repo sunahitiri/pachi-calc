@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState } from 'react';
+import { Icon, PageHeader, NumberField, Notice, EmptyState } from './ui/Ui';
 import { calcBorder } from '../utils/calculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { finalSegmentInvestment } from '../utils/sessionUtils';
@@ -97,634 +98,238 @@ function totalDRot(session, currentRot) {
   return cumulative + Math.max(0, currentRot - segmentStart);
 }
 
-export default function SessionRecorder({ machines, onComplete }) {
-  // session が null = 未開始(idle)、それ以外は phase: 'playing' | 'hit-input'
+export default function SessionRecorder({ machines, onComplete, onManageMachines }) {
   const [session, setSession] = useLocalStorage('pachi-active-session', null);
-
-  // 削除 (アーカイブ) 済み機種は新規セッションの選択肢に出さない。
-  // 進行中セッションや過去記録の参照 (machines.find) は全リストのまま行う。
-  const selectableMachines = machines.filter((m) => !m.deleted);
-
-  // ====== idle: 開始フォーム ======
-  const [startDate, setStartDate] = useState(todayStr());
-  const [startExchangeId, setStartExchangeId] = useState(DEFAULT_EXCHANGE_ID);
-  const [startMachineId, setStartMachineId] = useState(selectableMachines[0]?.id || '');
-  const [startRotInput, setStartRotInput] = useState('');
-  const [startBallsInput, setStartBallsInput] = useState('');
-  const [startNotesInput, setStartNotesInput] = useState('');
-
-  const handleStart = () => {
-    // 選択後に機種が削除された場合など、選択肢に無い機種では開始しない
-    if (!selectableMachines.some((m) => m.id === startMachineId)) return;
-    const startRotations = numOr(startRotInput, 0);
-    const startBalls = numOr(startBallsInput, 0);
-    const exchangeOpt = EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0];
-    setSession({
-      id: Date.now().toString(),
-      date: startDate,
-      machineId: startMachineId,
-      exchangeId: exchangeOpt.id,
-      exchangeRate: exchangeOpt.rate,
-      notes: startNotesInput,
-      startedAt: new Date().toISOString(),
-      startRotations,
-      startBalls,
-      currentRotations: startRotations,
-      currentBalls: startBalls,
-      // セグメント管理: あたり後に機械表示がリセットされても累計を保持する
-      cumulativeRotations: 0,          // 確定済みセグメント合計(あたり前までの累計)
-      segmentStartRotations: startRotations, // 現セグメントの開始機械表示
-      totalInvestment: 0,
-      hits: [],       // [{ atMachineRot, atCumulative, resumeMachineRot, segmentRot, ballsBefore, ballsAfter, ballsGained, addedInvestment, timestamp }]
-      snapshots: [],  // [{ rotations, balls, investment, timestamp }]
-      phase: 'playing',
-    });
-    setStartRotInput('');
-    setStartBallsInput('');
-    setStartNotesInput('');
-  };
-
-  // ====== playing: 入力 ======
-  const [curRotInput, setCurRotInput] = useState('');
-  const [curBallsInput, setCurBallsInput] = useState('');
-  const [addInvInput, setAddInvInput] = useState('');
-  // 遊戯詳細の編集ドラフト (null = 閉じている)
-  const [detailDraft, setDetailDraft] = useState(null);
-  const showDetail = detailDraft !== null;
-  const openDetail = () => setDetailDraft(session);
-  const closeDetail = () => setDetailDraft(null);
-  const isDetailDirty =
-    detailDraft !== null && JSON.stringify(detailDraft) !== JSON.stringify(session);
-  const saveDetail = () => {
-    if (detailDraft) setSession(detailDraft);
-    closeDetail();
-  };
-  const cancelDetail = () => {
-    if (isDetailDirty && !confirm('編集内容を破棄しますか？')) return;
-    closeDetail();
-  };
-
-  // 遊戯セッション切替時に入力欄を同期
-  useEffect(() => {
-    if (session?.phase === 'playing') {
-      setCurRotInput(String(session.currentRotations));
-      setCurBallsInput(String(session.currentBalls));
-      setAddInvInput('');
-    }
-    // セッションが切り替わった (= id が変わった or null になった) ら、
-    // 前回開いていた遊戯詳細パネルが次セッションに引き継がれないようリセット
-    setDetailDraft(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, session?.phase]);
-
-  const rawMachine = session ? machines.find((m) => m.id === session.machineId) : null;
-  // セッションで選択した交換レートを優先 (旧セッション互換で未設定なら機種の値)
-  const machine = rawMachine
-    ? { ...rawMachine, exchangeRate: session.exchangeRate ?? rawMachine.exchangeRate }
-    : null;
-  const border = machine ? calcBorder(machine) : 0;
-
-  const livePerK = useMemo(() => {
-    if (!session || session.phase !== 'playing') return 0;
-    const curRot = numOr(curRotInput, session.currentRotations);
-    const curBalls = numOr(curBallsInput, session.currentBalls);
-    const addInv = numOr(addInvInput, 0);
-    const totalInv = session.totalInvestment + addInv;
-    const cumInv = cumulativeInvestment(totalInv, session.startBalls, curBalls, sumHitBallsGained(session.hits));
-    return calcPerK(totalDRot(session, curRot), cumInv);
-  }, [session, curRotInput, curBallsInput, addInvInput]);
-
-  // 入力欄の値を session にコミット
-  const commitCurrent = () => {
-    const parsedRot = numOr(curRotInput, session.currentRotations);
-    const { segmentStart } = getSegState(session);
-    // 現セグメント内では機械表示が開始値を下回らないようガード
-    const curRot = Math.max(parsedRot, segmentStart);
-    const curBalls = numOr(curBallsInput, session.currentBalls);
-    const addInv = numOr(addInvInput, 0);
-    return {
-      ...session,
-      currentRotations: curRot,
-      currentBalls: curBalls,
-      totalInvestment: session.totalInvestment + addInv,
-    };
-  };
-
-  const handleHit = () => {
-    const updated = commitCurrent();
-    setSession({ ...updated, phase: 'hit-input' });
-    setAddInvInput('');
-  };
-
-  const handleEnd = () => {
-    if (!confirm('遊戯を終了して履歴に保存しますか？')) return;
-    const updated = commitCurrent();
-    const totalRot = totalDRot(updated, updated.currentRotations);
-    const cumInv = cumulativeInvestment(
-      updated.totalInvestment,
-      updated.startBalls,
-      updated.currentBalls,
-      sumHitBallsGained(updated.hits)
-    );
-    const record = {
-      id: updated.id,
-      date: updated.date,
-      machineId: updated.machineId,
-      exchangeId: updated.exchangeId,
-      exchangeRate: updated.exchangeRate,
-      notes: updated.notes,
-      // RecordList / summarize 互換フィールド (累計投資額)
-      rotations: Math.max(0, totalRot),
-      investment: Math.max(0, Math.round(cumInv)),
-      // セッション詳細
-      startRotations: updated.startRotations,
-      startBalls: updated.startBalls,
-      endRotations: updated.currentRotations,
-      endBalls: updated.currentBalls,
-      cumulativeRotations: updated.cumulativeRotations ?? 0,
-      segmentStartRotations: updated.segmentStartRotations ?? updated.startRotations,
-      totalInvestment: updated.totalInvestment,
-      hits: updated.hits,
-      snapshots: updated.snapshots,
-      startedAt: updated.startedAt,
-      endedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      isSession: true,
-    };
+  const [savedMessage, setSavedMessage] = useState('');
+  const complete = record => {
     onComplete(record);
     setSession(null);
+    setSavedMessage('遊技記録を履歴に保存しました。');
   };
+  if (!session) return <StartForm machines={machines} onStart={value => { setSession(value); setSavedMessage(''); }} onManageMachines={onManageMachines} savedMessage={savedMessage} />;
+  return <ActiveSession key={session.id} session={session} machines={machines} setSession={setSession} onComplete={complete} />;
+}
 
-  // ====== hit-input ======
-  // hitResumeRotInput: あたり→時短などを抜けて通常プレイに戻った時点の「機械表示」の値。
-  // パチンコは大当りで機械表示がリセットされるのが一般的なので、通常は 0 近辺になる。
-  const [hitResumeRotInput, setHitResumeRotInput] = useState('');
-  const [hitBallsInput, setHitBallsInput] = useState('');
-  const [hitAddInvInput, setHitAddInvInput] = useState('');
+function StartForm({ machines, onStart, onManageMachines, savedMessage }) {
+  const selectable = machines.filter(m => !m.deleted);
+  const [date, setDate] = useState(todayStr);
+  const [exchangeId, setExchangeId] = useState(DEFAULT_EXCHANGE_ID);
+  const [machineId, setMachineId] = useState(selectable[0]?.id || '');
+  const [rotations, setRotations] = useState('0');
+  const [balls, setBalls] = useState('0');
+  const [notes, setNotes] = useState('');
+  const selectedId = selectable.some(m => m.id === machineId) ? machineId : selectable[0]?.id || '';
+  const exchange = EXCHANGE_OPTIONS.find(o => o.id === exchangeId) || EXCHANGE_OPTIONS[0];
 
-  useEffect(() => {
-    if (session?.phase === 'hit-input') {
-      setHitResumeRotInput('0');
-      setHitBallsInput(String(session.currentBalls));
-      setHitAddInvInput('');
-    }
-  }, [session?.phase]);
-
-  // あたり画面のライブ計算プレビュー（再開後の状態をシミュレート）
-  const hitLiveStats = useMemo(() => {
-    if (!session || session.phase !== 'hit-input') return null;
-    const resumeRot = numOr(hitResumeRotInput, 0);
-    const newBalls = numOr(hitBallsInput, session.currentBalls);
-    const addInv = numOr(hitAddInvInput, 0);
-    const totalInv = session.totalInvestment + addInv;
-    // このあたりまでのセグメント分(機械表示ベース)
-    const { segmentStart, cumulative } = getSegState(session);
-    const thisSegmentRot = Math.max(0, session.currentRotations - segmentStart);
-    // あたり確定時点の累計回転数
-    const newCumulative = cumulative + thisSegmentRot;
-    // 累計投資: このあたりで増えた球分を含め、全あたりの払い出し球は差し引かない
-    const thisHitGained = newBalls - session.currentBalls;
-    const totalHitGained = sumHitBallsGained(session.hits) + thisHitGained;
-    const cumInv = cumulativeInvestment(totalInv, session.startBalls, newBalls, totalHitGained);
-    // 再開直後は新セグメント差分 0 なので累計 = newCumulative
-    return {
-      resumeRot,
-      newBalls,
-      thisSegmentRot,
-      newCumulative,
-      totalInv,
-      cumInv,
-      perK: calcPerK(newCumulative, cumInv),
-      ballsGained: thisHitGained,
-    };
-  }, [session, hitResumeRotInput, hitBallsInput, hitAddInvInput]);
-
-  const handleResume = () => {
-    const resumeRot = numOr(hitResumeRotInput, 0);
-    const newBalls = numOr(hitBallsInput, session.currentBalls);
-    const addInv = numOr(hitAddInvInput, 0);
-    const { segmentStart, cumulative } = getSegState(session);
-    // このセグメントで回した分をあたり発生時点で確定して累計に加算
-    const thisSegmentRot = Math.max(0, session.currentRotations - segmentStart);
-    const newCumulative = cumulative + thisSegmentRot;
-    // このあたり直前までに投入された現金のうち、まだどの hit にも紐付いていない分。
-    // (= 直前のセグメント中に追加された現金。あたり後画面の追加投資 addInv とは別物)
-    // これを当該 hit の addedInvestment に帰属させ、遊戯詳細で各セクションごとの現金投資が
-    // 正しく表示されるようにする。
-    const segmentInvestment = finalSegmentInvestment(session);
-    const hit = {
-      atMachineRot: session.currentRotations,
-      atCumulative: newCumulative,
-      resumeMachineRot: resumeRot,
-      segmentRot: thisSegmentRot,
-      ballsBefore: session.currentBalls,
-      ballsAfter: newBalls,
-      ballsGained: newBalls - session.currentBalls,
-      addedInvestment: segmentInvestment + addInv,
-      timestamp: new Date().toISOString(),
-    };
-    setSession({
-      ...session,
-      // 次セグメント: 機械表示は resumeRot から始まる
-      currentRotations: resumeRot,
-      segmentStartRotations: resumeRot,
-      cumulativeRotations: newCumulative,
-      currentBalls: newBalls,
-      totalInvestment: session.totalInvestment + addInv,
-      hits: [...session.hits, hit],
-      phase: 'playing',
+  const start = e => {
+    e.preventDefault();
+    if (!selectedId || !date) return;
+    const startRotations = Number(rotations);
+    const startBalls = Number(balls);
+    onStart({
+      id: Date.now().toString(), date, machineId: selectedId,
+      exchangeId: exchange.id, exchangeRate: exchange.rate, notes,
+      startedAt: new Date().toISOString(), startRotations, startBalls,
+      currentRotations: startRotations, currentBalls: startBalls,
+      cumulativeRotations: 0, segmentStartRotations: startRotations,
+      totalInvestment: 0, hits: [], snapshots: [], phase: 'playing',
     });
-    setHitResumeRotInput('');
-    setHitBallsInput('');
-    setHitAddInvInput('');
   };
 
-  const handleCancelSession = () => {
-    if (!confirm('現在の遊戯を破棄して最初に戻りますか？(履歴には保存されません)')) return;
-    setSession(null);
+  return <div className="page">
+    <PageHeader eyebrow="PLAY RECORD" title="今日の記録をはじめる" description="台の表示と持ち玉から、かんたんに。" />
+    <Notice>{savedMessage}</Notice>
+    {!selectable.length ? <EmptyState title="まずは機種を登録" description="機種を追加すると、遊技の記録を始められます。" action={<button className="primary-button" onClick={onManageMachines}><Icon name="plus" />機種を追加</button>} /> :
+      <form onSubmit={start}>
+        <div className="surface stack">
+          <div><label className="form-label">遊技する機種</label><MachineSelector machines={selectable} value={selectedId} onChange={setMachineId} exchangeRate={exchange.rate} /></div>
+          <div className="form-grid">
+            <label><span className="form-label">日付</span><input className="text-input" type="date" value={date} onChange={e => setDate(e.target.value)} required /></label>
+            <label><span className="form-label">交換レート</span><select className="select-input" value={exchangeId} onChange={e => setExchangeId(e.target.value)}>{EXCHANGE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>
+          </div>
+        </div>
+        <h2 className="section-heading">開始時の数値</h2>
+        <div className="stack">
+          <NumberField label="台の表示回転数" value={rotations} onChange={setRotations} suffix="回" large />
+          <NumberField label="持ち玉" value={balls} onChange={setBalls} suffix="玉" large />
+        </div>
+        <details className="disclosure"><summary>ホール・メモを追加</summary><div className="disclosure-content"><label><span className="form-label">メモ（任意）</span><input className="text-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="ホール名、台番号など" /></label></div></details>
+        <div className="entry-actions record-actions"><button className="primary-button full-width" type="submit">遊技を開始<Icon name="arrow" size={18} /></button></div>
+        <p className="small muted" style={{ textAlign: 'center', marginTop: 14 }}>進行中の記録は、この端末に保存されます。</p>
+      </form>}
+  </div>;
+}
+
+function ActiveSession({ session, machines, setSession, onComplete }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const [detailDirty, setDetailDirty] = useState(false);
+  const rawMachine = machines.find(m => m.id === session.machineId);
+  const machine = rawMachine ? { ...rawMachine, exchangeRate: session.exchangeRate ?? rawMachine.exchangeRate } : null;
+  if (showDetail) return <div className="page">
+    <PageHeader title="進行中の記録を編集" back={() => {
+      if (detailDirty && !confirm('保存していない変更を破棄しますか？')) return;
+      setDetailDirty(false); setShowDetail(false);
+    }} />
+    <div className="detail-machine"><h2>{machine?.name || '削除済みの機種'}</h2><p>{session.date}・{session.exchangeId === '25' ? '25玉交換（等価）' : '28玉交換'}</p></div>
+    <SessionDetail session={session} onChange={setSession} includeEndRow onDirtyChange={setDetailDirty} />
+  </div>;
+  if (session.phase === 'hit-input') return <HitForm key={session.hits?.length || 0} session={session} machine={machine} setSession={setSession} />;
+
+  return <PlayingForm key={session.hits?.length || 0} session={session} machine={machine} setSession={setSession} onComplete={onComplete} onOpenDetail={() => setShowDetail(true)} />;
+}
+
+function MachineSummary({ session, machine }) {
+  return <div className="surface machine-summary">
+    <span className="machine-symbol"><Icon name="machine" size={23} /></span>
+    <div className="machine-copy"><h2>{machine?.name || '削除済みの機種'}</h2><p>{session.date.replaceAll('-', '/')}・{session.exchangeId === '25' ? '25玉交換（等価）' : '28玉交換'}</p></div>
+  </div>;
+}
+
+function PlayingForm({ session, machine, setSession, onComplete, onOpenDetail }) {
+  const [rotations, setRotations] = useState(String(session.currentRotations ?? 0));
+  const [balls, setBalls] = useState(String(session.currentBalls ?? 0));
+  const [investment, setInvestment] = useState('');
+  const [showInvestment, setShowInvestment] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const border = machine ? calcBorder(machine) : 0;
+  const curRot = numOr(rotations, session.currentRotations);
+  const curBalls = numOr(balls, session.currentBalls);
+  const totalInv = session.totalInvestment + numOr(investment, 0);
+  const dRot = totalDRot(session, curRot);
+  const cumInv = cumulativeInvestment(totalInv, session.startBalls, curBalls, sumHitBallsGained(session.hits));
+  const perK = calcPerK(dRot, cumInv);
+  const hourlyEV = strictHourlyEV(session, curBalls, totalInv, dRot, machine);
+  const totalEV = strictTotalEV(session, curBalls, totalInv, dRot, machine);
+  const dirty = curRot !== session.currentRotations || curBalls !== session.currentBalls || numOr(investment, 0) > 0;
+  const signedYen = value => `${value >= 0 ? '+' : '−'}¥${Math.abs(Math.round(value)).toLocaleString()}`;
+  const updateInput = setter => value => { setter(value); setError(''); setNotice(''); };
+
+  const committed = () => {
+    if (rotations === '' || balls === '') { setError('回転数と持ち玉を入力してください。'); return null; }
+    if (curRot < getSegState(session).segmentStart) { setError(`回転数は、この区間の開始値（${getSegState(session).segmentStart}回）以上で入力してください。当たり後のリセットは「当たりを記録」から入力できます。`); return null; }
+    return { ...session, currentRotations: curRot, currentBalls: curBalls, totalInvestment: totalInv, lastRecordedAt: new Date().toISOString() };
+  };
+  const save = e => {
+    e.preventDefault();
+    const next = committed();
+    if (!next) return;
+    setSession(next);
+    setInvestment('');
+    setNotice('記録を更新しました。');
+  };
+  const hit = () => {
+    const next = committed();
+    if (next) setSession({ ...next, phase: 'hit-input' });
+  };
+  const end = () => {
+    const updated = committed();
+    if (!updated || !confirm('遊技を終了して履歴に保存しますか？')) return;
+    const now = new Date().toISOString();
+    onComplete({
+      id: updated.id, date: updated.date, machineId: updated.machineId,
+      exchangeId: updated.exchangeId, exchangeRate: updated.exchangeRate, notes: updated.notes,
+      rotations: totalDRot(updated, updated.currentRotations),
+      investment: Math.max(0, Math.round(cumulativeInvestment(updated.totalInvestment, updated.startBalls, updated.currentBalls, sumHitBallsGained(updated.hits)))),
+      startRotations: updated.startRotations, startBalls: updated.startBalls,
+      endRotations: updated.currentRotations, endBalls: updated.currentBalls,
+      cumulativeRotations: updated.cumulativeRotations, segmentStartRotations: updated.segmentStartRotations,
+      totalInvestment: updated.totalInvestment, hits: updated.hits, snapshots: updated.snapshots || [],
+      startedAt: updated.startedAt, endedAt: now, createdAt: now, isSession: true,
+    });
+  };
+  const openDetail = () => {
+    if (dirty && !confirm('入力中の数値を保存せずに、記録の編集へ移動しますか？')) return;
+    onOpenDetail();
   };
 
-  // ====================== RENDER ======================
-
-  // ----- idle -----
-  if (!session) {
-    return (
-      <div className="p-4 space-y-4">
-        <h2 className="text-lg font-bold text-slate-900 dark:text-white">遊戯開始</h2>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">日付</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="block w-full min-w-0 appearance-none px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">交換レート</label>
-          <select
-            value={startExchangeId}
-            onChange={(e) => setStartExchangeId(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-          >
-            {EXCHANGE_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}（1玉 {o.rate.toFixed(2)}円）
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">機種</label>
-          <MachineSelector
-            machines={selectableMachines}
-            value={startMachineId}
-            onChange={setStartMachineId}
-            exchangeRate={(EXCHANGE_OPTIONS.find((o) => o.id === startExchangeId) || EXCHANGE_OPTIONS[0]).rate}
-            placeholder="選択してください"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の回転数</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={startRotInput}
-              onChange={(e) => setStartRotInput(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-              placeholder="例: 0"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">持ち玉数</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={startBallsInput}
-              onChange={(e) => setStartBallsInput(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-              placeholder="例: 0"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">メモ（任意）</label>
-          <input
-            type="text"
-            value={startNotesInput}
-            onChange={(e) => setStartNotesInput(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-            placeholder="ホール名など"
-          />
-        </div>
-        <button
-          onClick={handleStart}
-          disabled={!selectableMachines.some((m) => m.id === startMachineId)}
-          className="w-full bg-blue-600 disabled:opacity-50 text-white py-3 rounded-lg font-bold hover:bg-blue-700 active:bg-blue-800 transition"
-        >
-          ▶ 遊戯開始
-        </button>
+  return <div className="page">
+    <PageHeader eyebrow="PLAY RECORD" title="遊技記録" actions={<><span className="status-pill">記録中</span><details className="more-menu"><summary className="icon-button" aria-label="遊技のメニュー"><Icon name="more" /></summary><div className="more-menu-popover"><button type="button" onClick={() => { if (confirm('進行中の遊技を破棄しますか？履歴には保存されません。')) setSession(null); }}>この遊技を破棄</button></div></details></>} />
+    <MachineSummary session={session} machine={machine} />
+    <form onSubmit={save}>
+      <div className="section-heading-row"><h2 className="section-heading">いまの数値を入力</h2>{dirty && <span className="small muted">未保存</span>}</div>
+      <div className="stack">
+        <NumberField label="台の表示回転数" value={rotations} onChange={updateInput(setRotations)} suffix="回" large />
+        <NumberField label="持ち玉" value={balls} onChange={updateInput(setBalls)} suffix="玉" large />
       </div>
-    );
-  }
-
-  // ----- hit-input -----
-  if (session.phase === 'hit-input') {
-    const atRot = session.currentRotations;
-    const atBalls = session.currentBalls;
-    const { segmentStart: _segStart, cumulative: _cum } = getSegState(session);
-    const thisSegmentRot = Math.max(0, atRot - _segStart);
-    const preHitCumulative = _cum + thisSegmentRot;
-    const stats = hitLiveStats;
-    return (
-      <div className="p-4 space-y-4">
-        <div className="bg-orange-50 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-800 rounded-lg p-3">
-          <div className="text-sm text-slate-600 dark:text-slate-300">{session.date}</div>
-          <div className="font-bold text-slate-900 dark:text-white">{machine?.name ?? '不明'}</div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-1">
-            <div className="text-slate-600 dark:text-slate-300">開始からの累計回転</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{preHitCumulative.toLocaleString()} 回</div>
-            <div className="text-slate-600 dark:text-slate-300">今回セグメントで回した</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{thisSegmentRot.toLocaleString()} 回</div>
-            <div className="text-slate-600 dark:text-slate-300">あたり時の機械表示</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{atRot.toLocaleString()} 回</div>
-            <div className="text-slate-600 dark:text-slate-300">あたり時の持ち玉</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{atBalls.toLocaleString()} 個</div>
-            <div className="text-slate-600 dark:text-slate-300">現金投資</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">¥{session.totalInvestment.toLocaleString()}</div>
-            <div className="text-slate-600 dark:text-slate-300">今回までのあたり</div>
-            <div className="text-right font-semibold text-slate-900 dark:text-white">{session.hits.length} 回</div>
-          </div>
+      <h2 className="section-heading">追加投資<span className="optional-label">任意</span></h2>
+      <div className="investment-chips">{[1000, 5000].map(n => <button type="button" key={n} onClick={() => { setInvestment(String(numOr(investment, 0) + n)); setNotice(''); setError(''); }}>+{n.toLocaleString()}円</button>)}<button type="button" aria-expanded={showInvestment} onClick={() => setShowInvestment(value => !value)}>金額入力</button></div>
+      {(showInvestment || investment !== '') && <NumberField label="今回追加する金額" value={investment} onChange={updateInput(setInvestment)} suffix="円" required={false} />}
+      <div className="surface" style={{ marginTop: 20 }}>
+        <div className="metrics-grid">
+          <div className="metric"><div className="metric-label">現金投資</div><div className="metric-value">¥{totalInv.toLocaleString()}</div></div>
+          <div className="metric"><div className="metric-label">回転率</div><div className="metric-value">{perK > 0 ? perK.toFixed(1) : '—'}<small>回/1K</small></div></div>
         </div>
-
-        <h2 className="text-lg font-bold text-slate-900 dark:text-white">🎉 あたり後の入力</h2>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-            再開時の機械表示（回転数）
-          </label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={hitResumeRotInput}
-            onChange={(e) => setHitResumeRotInput(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-            placeholder="例: 0"
-          />
-          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            ※ 大当り後は機械表示がリセットされます。通常プレイに戻った時点の機械の表示値を入力してください。
-            <br />
-            　時短で100回転消化して再開なら「100」、すぐ通常に戻ったなら「0」です。
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-            現在の持ち玉（あたり獲得後）
-          </label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={hitBallsInput}
-            onChange={(e) => setHitBallsInput(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-          />
-          {stats && stats.ballsGained !== 0 && (
-            <div className={`text-xs mt-1 ${stats.ballsGained > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-              {stats.ballsGained > 0 ? '+' : ''}{stats.ballsGained.toLocaleString()} 玉
-            </div>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-            追加投資（円）<span className="text-xs text-slate-500">任意</span>
-          </label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={hitAddInvInput}
-            onChange={(e) => setHitAddInvInput(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-            placeholder="あたり中に追加した金額があれば"
-          />
-          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            現金投資: ¥{session.totalInvestment.toLocaleString()}
-            {hitAddInvInput ? ` → ¥${(stats?.totalInv ?? session.totalInvestment).toLocaleString()}` : ''}
-          </div>
-        </div>
-
-        {stats && (
-          <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 space-y-1 text-sm">
-            <div className="font-semibold text-slate-900 dark:text-white text-xs mb-1">再開後の状態（プレビュー）</div>
-            <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">開始からの累計回転</span>
-              <span className="font-semibold text-slate-900 dark:text-white">{stats.newCumulative.toLocaleString()} 回</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">現金投資</span>
-              <span className="font-semibold text-slate-900 dark:text-white">¥{stats.totalInv.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">累計投資</span>
-              <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(stats.cumInv)).toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between pt-1 border-t border-slate-300 dark:border-slate-700">
-              <span className="font-bold text-slate-900 dark:text-white">1K回転数</span>
-              <span className={`font-bold ${stats.perK - border >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                {stats.perK.toFixed(2)} 回
-                <span className="text-xs ml-1">
-                  ({stats.perK - border >= 0 ? '+' : ''}{(stats.perK - border).toFixed(2)})
-                </span>
-              </span>
-            </div>
-          </div>
-        )}
-
-        <button
-          onClick={handleResume}
-          className="w-full bg-green-600 text-white py-3 rounded-lg font-bold hover:bg-green-700 active:bg-green-800"
-        >
-          ▶ 再開
-        </button>
+        <p className="metric-footnote">{dirty ? '入力中の数値で集計しています' : session.lastRecordedAt ? `最終記録 ${new Date(session.lastRecordedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}` : '開始時の数値を記録しました'}</p>
       </div>
-    );
-  }
-
-  // ----- playing -----
-  const curRotLive = numOr(curRotInput, session.currentRotations);
-  const dRot = totalDRot(session, curRotLive);
-  const { segmentStart: segStartLive, cumulative: cumLive } = getSegState(session);
-  const thisSegLive = Math.max(0, curRotLive - segStartLive);
-  const totalInvDisplay = session.totalInvestment + numOr(addInvInput, 0);
-  const curBalls = numOr(curBallsInput, session.currentBalls);
-  const cumInv = cumulativeInvestment(totalInvDisplay, session.startBalls, curBalls, sumHitBallsGained(session.hits));
-  const delta = livePerK - border;
-  const hourlyEV = strictHourlyEV(session, curBalls, totalInvDisplay, Math.max(0, dRot), machine);
-  const totalEV = strictTotalEV(session, curBalls, totalInvDisplay, Math.max(0, dRot), machine);
-
-  return (
-    <div className="p-4 space-y-4">
-      <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-800 rounded-lg p-3">
-        <div className="flex justify-between items-start">
-          <div>
-            <div className="text-xs text-slate-600 dark:text-slate-300">{session.date}</div>
-            <div className="font-bold text-slate-900 dark:text-white">{machine?.name ?? '不明'}</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              開始: {session.startRotations.toLocaleString()}回 / 持ち玉{session.startBalls.toLocaleString()}個
-            </div>
-            {session.hits.length > 0 && (
-              <div className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
-                🎉 あたり {session.hits.length}回 / 確定累計 {cumLive.toLocaleString()}回
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleCancelSession}
-            className="text-xs text-red-500 px-2 py-1"
-          >
-            破棄
-          </button>
-        </div>
+      <div className="entry-actions record-actions">
+        <Notice error>{error}</Notice><Notice>{notice}</Notice>
+        <button type="submit" className="primary-button full-width"><Icon name="check" size={18} />記録を更新</button>
+        <button type="button" onClick={hit} className="secondary-button full-width"><Icon name="target" size={18} />当たりを記録</button>
       </div>
+    </form>
+    <details className="disclosure"><summary>回転数・期待値を詳しく見る</summary><div className="surface disclosure-content">
+      <dl className="stats-list">
+        <div><dt>累計回転数</dt><dd>{dRot.toLocaleString()} 回</dd></div>
+        <div><dt>当たり回数</dt><dd>{(session.hits || []).length} 回</dd></div>
+        <div><dt>累計投資（持ち玉を含む）</dt><dd>¥{Math.max(0, Math.round(cumInv)).toLocaleString()}</dd></div>
+        <div><dt>ボーダー</dt><dd>{border.toFixed(2)} 回/1K</dd></div>
+        <div><dt>ボーダーとの差</dt><dd className={perK >= border ? 'positive' : 'negative'}>{perK >= border ? '+' : ''}{(perK - border).toFixed(2)} 回</dd></div>
+        <div><dt>累計期待値</dt><dd className={totalEV >= 0 ? 'positive' : 'negative'}>{signedYen(totalEV)}</dd></div>
+        <div><dt>期待時給（200回転/h）</dt><dd className={hourlyEV >= 0 ? 'positive' : 'negative'}>{signedYen(hourlyEV)}</dd></div>
+      </dl>
+    </div></details>
+    <button type="button" className="quiet-button full-width" onClick={openDetail}><Icon name="edit" size={17} />開始・当たりの記録を編集</button>
+    <button type="button" className="quiet-button full-width" onClick={end}><Icon name="flag" size={17} />遊技を終了して保存</button>
+  </div>;
+}
 
-      <div>
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の回転数（機械表示）</label>
-        <input
-          type="number"
-          inputMode="numeric"
-          value={curRotInput}
-          onChange={(e) => setCurRotInput(e.target.value)}
-          className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-        />
-        {session.hits.length > 0 && (
-          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            現セグメント開始: {segStartLive.toLocaleString()}回 → 今のセグメント: {thisSegLive.toLocaleString()}回
-          </div>
-        )}
+function HitForm({ session, machine, setSession }) {
+  const [resume, setResume] = useState('0');
+  const [balls, setBalls] = useState(String(session.currentBalls));
+  const [investment, setInvestment] = useState('');
+  const border = machine ? calcBorder(machine) : 0;
+  const { segmentStart, cumulative } = getSegState(session);
+  const segmentRot = Math.max(0, session.currentRotations - segmentStart);
+  const newCumulative = cumulative + segmentRot;
+  const gained = numOr(balls, session.currentBalls) - session.currentBalls;
+  const totalInv = session.totalInvestment + numOr(investment, 0);
+  const cumInv = cumulativeInvestment(totalInv, session.startBalls, numOr(balls, session.currentBalls), sumHitBallsGained(session.hits) + gained);
+  const perK = calcPerK(newCumulative, cumInv);
+  const submit = e => {
+    e.preventDefault();
+    const resumeRot = Number(resume);
+    const newBalls = Number(balls);
+    const addInv = numOr(investment, 0);
+    const hit = {
+      atMachineRot: session.currentRotations, atCumulative: newCumulative,
+      resumeMachineRot: resumeRot, segmentRot, ballsBefore: session.currentBalls,
+      ballsAfter: newBalls, ballsGained: newBalls - session.currentBalls,
+      addedInvestment: finalSegmentInvestment(session) + addInv, timestamp: new Date().toISOString(),
+    };
+    setSession({ ...session, currentRotations: resumeRot, currentBalls: newBalls,
+      segmentStartRotations: resumeRot, cumulativeRotations: newCumulative,
+      totalInvestment: totalInv, hits: [...(session.hits || []), hit],
+      lastRecordedAt: new Date().toISOString(), phase: 'playing' });
+  };
+  return <div className="page">
+    <PageHeader eyebrow="HIT RECORD" title="当たり後の数値を入力" description="通常の遊技に戻った時点で記録します。" />
+    <MachineSummary session={session} machine={machine} />
+    <div className="surface" style={{ marginTop: 16 }}><dl className="stats-list"><div><dt>当たり時の台の表示</dt><dd>{session.currentRotations.toLocaleString()} 回</dd></div><div><dt>当たり前の持ち玉</dt><dd>{session.currentBalls.toLocaleString()} 玉</dd></div></dl></div>
+    <form onSubmit={submit}>
+      <h2 className="section-heading">再開時の状態</h2>
+      <div className="stack">
+        <NumberField label="再開時の台の表示回転数" value={resume} onChange={setResume} suffix="回" large hint="時短で100回転なら「100」、すぐ通常に戻ったら「0」。" />
+        <NumberField label="当たり後の持ち玉" value={balls} onChange={setBalls} suffix="玉" large hint={`当たり前から ${gained >= 0 ? '+' : ''}${gained.toLocaleString()}玉`} />
+        <NumberField label="当たり中の追加投資（任意）" value={investment} onChange={setInvestment} suffix="円" required={false} />
       </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">現在の残玉数</label>
-        <input
-          type="number"
-          inputMode="numeric"
-          value={curBallsInput}
-          onChange={(e) => setCurBallsInput(e.target.value)}
-          className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-        />
+      <details className="disclosure"><summary>再開後の集計を見る</summary><div className="surface disclosure-content"><dl className="stats-list">
+        <div><dt>累計回転数</dt><dd>{newCumulative.toLocaleString()} 回</dd></div><div><dt>現金投資</dt><dd>¥{totalInv.toLocaleString()}</dd></div>
+        <div><dt>回転率 / ボーダー</dt><dd>{perK.toFixed(1)} / {border.toFixed(1)} 回</dd></div>
+      </dl></div></details>
+      <div className="entry-actions record-actions"><button type="submit" className="primary-button full-width"><Icon name="check" size={18} />当たりを保存して再開</button>
+        <button type="button" className="quiet-button" onClick={() => { if (confirm('当たり後の入力を取り消して戻りますか？')) setSession({ ...session, phase: 'playing' }); }}>当たりの入力をやめる</button>
       </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">追加投資金額(円)</label>
-        <input
-          type="number"
-          inputMode="numeric"
-          value={addInvInput}
-          onChange={(e) => setAddInvInput(e.target.value)}
-          className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white"
-          placeholder="例: 1000"
-        />
-        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          現金投資: ¥{session.totalInvestment.toLocaleString()}
-          {addInvInput ? ` → ¥${totalInvDisplay.toLocaleString()}` : ''}
-        </div>
-      </div>
-
-      <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 space-y-1">
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">開始からの累計回転</span>
-          <span className="font-semibold text-slate-900 dark:text-white">{Math.max(0, dRot).toLocaleString()} 回</span>
-        </div>
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">現金投資</span>
-          <span className="font-semibold text-slate-900 dark:text-white">¥{totalInvDisplay.toLocaleString()}</span>
-        </div>
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">累計投資</span>
-          <span className="font-semibold text-slate-900 dark:text-white">¥{Math.max(0, Math.round(cumInv)).toLocaleString()}</span>
-        </div>
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">ボーダー</span>
-          <span className="font-semibold text-slate-900 dark:text-white">{border.toFixed(2)} 回/1K</span>
-        </div>
-        <div className="text-base flex justify-between pt-1 border-t border-slate-300 dark:border-slate-700">
-          <span className="font-bold text-slate-900 dark:text-white">現在の1K回転数</span>
-          <span className={`font-bold ${delta >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            {livePerK.toFixed(2)} 回
-            <span className="text-xs ml-1">
-              ({delta >= 0 ? '+' : ''}{delta.toFixed(2)})
-            </span>
-          </span>
-        </div>
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">現在の期待時給 <span className="text-xs text-slate-500">(200回転/h)</span></span>
-          <span className={`font-semibold ${hourlyEV >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            {hourlyEV >= 0 ? '+' : ''}¥{Math.round(hourlyEV).toLocaleString()}
-          </span>
-        </div>
-        <div className="text-sm flex justify-between">
-          <span className="text-slate-600 dark:text-slate-300">現在までの期待値</span>
-          <span className={`font-semibold ${totalEV >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            {totalEV >= 0 ? '+' : ''}¥{Math.round(totalEV).toLocaleString()}
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={handleHit}
-          className="bg-orange-500 text-white py-3 rounded-lg font-bold hover:bg-orange-600 active:bg-orange-700 text-sm"
-        >
-          🎉 あたり
-        </button>
-        <button
-          onClick={handleEnd}
-          className="bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 active:bg-red-800 text-sm"
-        >
-          ⏹ 遊戯終了
-        </button>
-      </div>
-
-      <button
-        onClick={() => (showDetail ? cancelDetail() : openDetail())}
-        className={`w-full text-slate-800 dark:text-slate-100 py-2 rounded-lg font-medium text-sm transition ${
-          // 詳細編集中はスクロールしても画面最上部に残るよう sticky 化。
-          // sticky 時はページ背景 (slate-50/slate-900) と同色にして「画面最上部の背景色を変えない」。
-          // ボタン認識用にボーダーを付与。
-          showDetail
-            ? 'sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600'
-            : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'
-        }`}
-      >
-        {showDetail ? '▾ 遊戯詳細を閉じる' : '▸ 遊戯詳細を表示'}
-      </button>
-
-      {showDetail && detailDraft && (
-        <>
-          <SessionDetail
-            session={detailDraft}
-            machines={machines}
-            onChange={(updated) => setDetailDraft(updated)}
-            onDeleteHit={(idx) => {
-              const newHits = (detailDraft.hits || []).filter((_, i) => i !== idx);
-              setDetailDraft({ ...detailDraft, hits: newHits });
-            }}
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={cancelDetail}
-              className="bg-slate-300 dark:bg-slate-600 dark:text-white py-2 rounded-lg font-medium text-sm"
-            >
-              キャンセル
-            </button>
-            <button
-              onClick={saveDetail}
-              disabled={!isDetailDirty}
-              className="bg-blue-600 text-white py-2 rounded-lg font-medium text-sm disabled:opacity-50"
-            >
-              保存
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
+    </form>
+  </div>;
 }

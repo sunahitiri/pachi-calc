@@ -1,144 +1,47 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { calcBorder } from '../utils/calculations';
+import { Icon } from './ui/Ui';
 
-/**
- * 機種選択用のカスタムドロップダウン。
- * - ネイティブ <select> より広い (viewport 基準、最大 640px) 中央ダイアログで開く
- * - 検索ボックス付き
- * - ボーダー値も各行に表示
- */
-export default function MachineSelector({
-  machines,
-  value,
-  onChange,
-  exchangeRate,
-  placeholder = '選択してください',
-}) {
+export default function MachineSelector({ machines, value, onChange, exchangeRate, placeholder = '選択してください' }) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const searchInputRef = useRef(null);
+  const triggerRef = useRef(null);
+  const searchRef = useRef(null);
+  const dialogRef = useRef(null);
+  const titleId = useId();
+  const selected = machines.find(machine => machine.id === value);
+  const filtered = machines.filter(machine => machine.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const close = () => { setIsOpen(false); setQuery(''); triggerRef.current?.focus(); };
 
-  const selected = useMemo(
-    () => machines.find((m) => m.id === value) || null,
-    [machines, value],
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return machines;
-    return machines.filter((m) => m.name.toLowerCase().includes(q));
-  }, [machines, query]);
-
-  const close = () => {
-    setIsOpen(false);
-    setQuery('');
-  };
-
-  // ESC で閉じる
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    const timeout = setTimeout(() => searchRef.current?.focus(), 0);
+    return () => clearTimeout(timeout);
   }, [isOpen]);
 
-  // 開いた直後に検索欄にフォーカス
-  useEffect(() => {
-    if (isOpen) {
-      const t = setTimeout(() => searchInputRef.current?.focus(), 0);
-      return () => clearTimeout(t);
-    }
-  }, [isOpen]);
+  const handleKeyDown = e => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    if (e.key !== 'Tab') return;
+    const items = dialogRef.current?.querySelectorAll('button:not(:disabled), input, [tabindex="0"]');
+    if (!items?.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
-  const triggerLabel = (() => {
-    if (!selected) return placeholder;
-    const b = calcBorder({ ...selected, exchangeRate });
-    return `${selected.name}（ボーダー${b.toFixed(1)}）`;
-  })();
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className={`w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white text-left flex items-center justify-between gap-2 ${
-          !selected ? 'text-slate-400 dark:text-slate-500' : ''
-        }`}
-      >
-        <span className="truncate">{triggerLabel}</span>
-        <span aria-hidden className="text-slate-400 shrink-0">▾</span>
-      </button>
-
-      {isOpen && createPortal(
-        <>
-          <div
-            className="fixed inset-0 bg-black/30 z-40"
-            onClick={close}
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchMove={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
-            onTouchCancel={(e) => e.stopPropagation()}
-            data-no-swipe
-            aria-hidden
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchMove={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
-            onTouchCancel={(e) => e.stopPropagation()}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(90vw,640px)] max-h-[80vh] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl shadow-xl z-50 flex flex-col"
-          >
-            <div className="p-3 border-b border-slate-200 dark:border-slate-600">
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="機種名で検索"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white"
-              />
-            </div>
-            <ul className="flex-1 overflow-y-auto">
-              {filtered.map((m) => {
-                const b = calcBorder({ ...m, exchangeRate });
-                const isSelected = m.id === value;
-                return (
-                  <li key={m.id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onChange(m.id);
-                        close();
-                      }}
-                      className={`w-full text-left px-4 py-3 hover:bg-slate-100 dark:hover:bg-slate-700 ${
-                        isSelected ? 'bg-blue-50 dark:bg-blue-900/30' : ''
-                      }`}
-                    >
-                      <div className="font-medium text-slate-900 dark:text-white">
-                        {m.name}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                        ボーダー {b.toFixed(1)} 回転
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-              {filtered.length === 0 && (
-                <li className="px-4 py-6 text-center text-slate-500 dark:text-slate-400 text-sm">
-                  該当機種なし
-                </li>
-              )}
-            </ul>
-          </div>
-        </>,
-        document.body,
-      )}
-    </>
-  );
+  return <>
+    <button type="button" ref={triggerRef} className="machine-picker-trigger" aria-haspopup="dialog" aria-expanded={isOpen} onClick={() => setIsOpen(true)}><span>{selected?.name || placeholder}</span><Icon name="next" size={17} /></button>
+    {isOpen && createPortal(<>
+      <div className="machine-picker-backdrop" onClick={close} aria-hidden="true" />
+      <div className="machine-picker" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef} onKeyDown={handleKeyDown}>
+        <div className="sheet-handle" />
+        <div className="machine-picker-header"><h2 id={titleId}>遊技する機種を選択</h2><button className="icon-button" type="button" onClick={close} aria-label="閉じる"><Icon name="close" /></button></div>
+        <label className="search-field"><Icon name="search" size={18} /><input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="機種名で検索" aria-label="機種名で検索" /></label>
+        <ul className="machine-picker-list">{filtered.map(machine => <li key={machine.id}><button type="button" aria-pressed={machine.id === value} onClick={() => { onChange(machine.id); close(); }}><span>{machine.name}<small>ボーダー {calcBorder({ ...machine, exchangeRate }).toFixed(1)} 回/1K</small></span>{machine.id === value && <Icon name="check" size={18} />}</button></li>)}
+          {filtered.length === 0 && <li className="small muted" style={{ textAlign: 'center', padding: 24 }}>該当する機種がありません</li>}
+        </ul>
+      </div>
+    </>, document.body)}
+  </>;
 }

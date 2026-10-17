@@ -1,510 +1,182 @@
-import { useEffect, useMemo, useState } from 'react';
-import { calcExpectedValue, calcSessionExpectedValue, summarize, rotationsPer1K, calcBorder } from '../utils/calculations';
+import { useMemo, useState } from 'react';
+import { calcExpectedValue, calcSessionExpectedValue, rotationsPer1K } from '../utils/calculations';
 import SessionDetail from './SessionDetail';
+import MachineSelector from './MachineSelector';
+import { Icon, PageHeader, NumberField, Notice, EmptyState } from './ui/Ui';
 
-// セッション記録の収支(円)の合計 — 非セッション記録は対象外
-function computeProfit(records, machineMap) {
-  return records.reduce((acc, r) => {
-    if (!r.isSession) return acc;
-    const m = machineMap[r.machineId];
-    const rate = r.exchangeRate ?? m?.exchangeRate ?? 4;
-    const cash = Number(r.totalInvestment ?? r.investment) || 0;
-    const startBalls = Number(r.startBalls) || 0;
-    const endBalls = Number(r.endBalls) || 0;
-    return acc + (endBalls - startBalls) * rate - cash;
-  }, 0);
+function signedYen(value) {
+  return `${value >= 0 ? '+' : '−'}¥${Math.abs(Math.round(value)).toLocaleString()}`;
 }
-
-// 金額表示のフォーマット (+/- と ¥、小数なし)
-function formatSignedYen(n) {
-  const rounded = Math.round(n);
-  const sign = rounded >= 0 ? '+' : '';
-  return `${sign}¥${rounded.toLocaleString()}`;
+function monthOfToday() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
-
-function RecordCard({ r, machineMap, onOpen }) {
-  const machine = machineMap[r.machineId];
-  const ev = !machine
-    ? 0
-    : r.isSession
-    ? calcSessionExpectedValue(r, machine)
-    : calcExpectedValue({
-        totalRotations: r.rotations,
-        investment: r.investment,
-        machine,
-      });
-  const exRate = r.exchangeRate ?? machine?.exchangeRate ?? 4;
-  const cashInv = Number(r.totalInvestment ?? r.investment) || 0;
-  const profit = r.isSession
-    ? ((Number(r.endBalls) || 0) - (Number(r.startBalls) || 0)) * exRate - cashInv
-    : null;
-
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen?.(r)}
-      className="w-full text-left bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700/50 active:bg-slate-100 dark:active:bg-slate-700 transition"
-    >
-      <div className="flex items-center justify-between gap-2 text-sm">
-        <span className="text-slate-500 dark:text-slate-400 shrink-0">{r.date}</span>
-        <span className="flex items-center gap-3 text-xs font-semibold">
-          <span className={ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-            期:{formatSignedYen(ev)}
-          </span>
-          {profit !== null && (
-            <span className={profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-              収:{formatSignedYen(profit)}
-            </span>
-          )}
-        </span>
-      </div>
-      {r.notes && (
-        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 truncate">📝 {r.notes}</div>
-      )}
-    </button>
-  );
+function dateLabel(date) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
 }
-
-export default function RecordList({ records, machines, onDelete, onUpdate }) {
-  const machineMap = useMemo(
-    () => Object.fromEntries(machines.map((m) => [m.id, m])),
-    [machines]
-  );
-
-  // 編集中の記録 ID
-  const [editingId, setEditingId] = useState(null);
-  const editingRecord = useMemo(
-    () => records.find((r) => r.id === editingId) || null,
-    [records, editingId]
-  );
-  // 編集中のドラフト (保存/キャンセルで確定/破棄)
-  const [draft, setDraft] = useState(null);
-  useEffect(() => {
-    // 別の記録を開いたときだけドラフトを初期化 (編集中の再レンダーでは上書きしない)
-    if (editingId) {
-      setDraft((prev) => (prev && prev.id === editingId ? prev : editingRecord));
-    } else {
-      setDraft(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId]);
-
-  // 年→月→日 でグループ化
-  const groups = useMemo(() => {
-    const byYear = new Map(); // year -> Map<ym, Map<ymd, records[]>>
-    for (const r of records) {
-      const date = r.date || '';
-      const year = date.slice(0, 4);
-      const ym = date.slice(0, 7);  // YYYY-MM
-      const ymd = date.slice(0, 10); // YYYY-MM-DD
-      if (!year || !ym || !ymd) continue;
-      if (!byYear.has(year)) byYear.set(year, new Map());
-      const monthMap = byYear.get(year);
-      if (!monthMap.has(ym)) monthMap.set(ym, new Map());
-      const dayMap = monthMap.get(ym);
-      if (!dayMap.has(ymd)) dayMap.set(ymd, []);
-      dayMap.get(ymd).push(r);
-    }
-    return [...byYear.entries()]
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([year, monthMap]) => {
-        const months = [...monthMap.entries()]
-          .sort((a, b) => b[0].localeCompare(a[0]))
-          .map(([month, dayMap]) => {
-            const days = [...dayMap.entries()]
-              .sort((a, b) => b[0].localeCompare(a[0]))
-              .map(([day, recs]) => {
-                const sorted = [...recs].sort(
-                  (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
-                );
-                return {
-                  day,
-                  records: sorted,
-                  summary: summarize(sorted, machines),
-                  profit: computeProfit(sorted, machineMap),
-                };
-              });
-            const monthRecs = days.flatMap((d) => d.records);
-            return {
-              month,
-              days,
-              records: monthRecs,
-              summary: summarize(monthRecs, machines),
-              profit: computeProfit(monthRecs, machineMap),
-            };
-          });
-        const yearRecs = months.flatMap((m) => m.records);
-        return {
-          year,
-          months,
-          count: yearRecs.length,
-          summary: summarize(yearRecs, machines),
-          profit: computeProfit(yearRecs, machineMap),
-        };
-      });
-  }, [records, machines, machineMap]);
-
-  // デフォルト: 最新の年・最新の月・最新の日を展開、それ以外は畳む
-  const defaultExpanded = useMemo(() => {
-    const s = new Set();
-    if (groups.length > 0) {
-      s.add('y:' + groups[0].year);
-      if (groups[0].months.length > 0) {
-        s.add('m:' + groups[0].months[0].month);
-        if (groups[0].months[0].days.length > 0) {
-          s.add('d:' + groups[0].months[0].days[0].day);
-        }
-      }
-    }
-    return s;
-  }, [groups]);
-
-  // ユーザーが明示的に反転したキー (デフォルトと逆の状態)
-  const [toggled, setToggled] = useState(() => new Set());
-  const isExpanded = (key) => {
-    const def = defaultExpanded.has(key);
-    return toggled.has(key) ? !def : def;
+function shiftMonth(month, amount) {
+  const [year, m] = month.split('-').map(Number);
+  const next = new Date(year, m - 1 + amount, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+}
+function recordStats(record, machine) {
+  const cash = Number(record.totalInvestment ?? record.investment) || 0;
+  const rate = record.exchangeRate ?? machine?.exchangeRate ?? 4;
+  const startBalls = Number(record.startBalls) || 0;
+  const endBalls = Number(record.endBalls) || 0;
+  const payout = (record.hits || []).reduce((sum, hit) => sum + (Number(hit.ballsGained) || 0), 0);
+  const effectiveInvestment = record.isSession ? Math.max(0, cash + (startBalls + payout - endBalls) * 4) : cash;
+  return {
+    cash,
+    profit: record.isSession ? (endBalls - startBalls) * rate - cash : null,
+    ev: !machine ? 0 : record.isSession ? calcSessionExpectedValue(record, machine) : calcExpectedValue({ totalRotations: record.rotations, investment: record.investment, machine }),
+    perK: rotationsPer1K(record.rotations, effectiveInvestment),
   };
-  const toggle = (key) => {
-    setToggled((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+}
 
-  // ===== 編集ビュー =====
-  if (editingRecord && draft) {
-    const machine = machineMap[draft.machineId];
-    const exRate = draft.exchangeRate ?? machine?.exchangeRate ?? 4;
-    const cashInv = Number(draft.totalInvestment ?? draft.investment) || 0;
-    const startBalls = Number(draft.startBalls) || 0;
-    const endBalls = Number(draft.endBalls) || 0;
-    const profit = draft.isSession
-      ? (endBalls - startBalls) * exRate - cashInv
-      : 0;
-    const ev = !machine
-      ? 0
-      : draft.isSession
-      ? calcSessionExpectedValue(draft, machine)
-      : calcExpectedValue({
-          totalRotations: draft.rotations,
-          investment: draft.investment,
-          machine,
-        });
-    // 1Kあたり回転数は常に 1玉=4円 換算。持ち玉で回した分も 4円 として投資額に含める。
-    //   投資相当額(円) = 現金 + (startBalls + hitPayout − endBalls) × 4
-    const hitPayout = (draft.hits || []).reduce(
-      (s, h) => s + (Number(h.ballsGained) || 0),
-      0
-    );
-    const stockConsumed = startBalls + hitPayout - endBalls; // 持ち玉の純消費玉数
-    const effectiveInv4yen = Math.max(0, cashInv + stockConsumed * 4);
-    const perK = rotationsPer1K(draft.rotations, effectiveInv4yen);
-    const border = machine ? calcBorder({ ...machine, exchangeRate: exRate }) : 0;
-
-    // ドラフトと元記録の差分判定 (浅い JSON 比較で十分)
-    const isDirty = JSON.stringify(draft) !== JSON.stringify(editingRecord);
-    const closeEdit = () => {
-      setEditingId(null);
-      setDraft(null);
-    };
-    const handleSave = () => {
-      onUpdate?.(draft);
-      closeEdit();
-    };
-    const handleCancel = () => {
-      if (isDirty && !confirm('編集内容を破棄しますか？')) return;
-      closeEdit();
-    };
-
-    return (
-      <div className="p-4 space-y-4">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleCancel}
-            className="text-slate-600 dark:text-slate-300 text-sm px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-          >
-            ← 戻る
-          </button>
-          <h2 className="font-bold text-slate-900 dark:text-white flex-1">
-            {draft.date} {machine?.name ?? '（削除済み機種）'}
-          </h2>
-          <button
-            onClick={() => {
-              if (confirm('この記録を削除しますか？')) {
-                onDelete(draft.id);
-                closeEdit();
-              }
-            }}
-            className="text-red-500 text-sm px-2 py-1"
-          >
-            削除
-          </button>
-        </div>
-
-        {draft.isSession ? (
-          <SessionDetail
-            session={draft}
-            machines={machines}
-            includeEndRow
-            onChange={(updated) => setDraft(updated)}
-            onDeleteHit={(idx) => {
-              const newHits = (draft.hits || []).filter((_, i) => i !== idx);
-              setDraft({ ...draft, hits: newHits });
-            }}
-          />
-        ) : (
-          <div className="text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
-            この記録はセッション形式ではないため、詳細編集できません。
-          </div>
-        )}
-
-        {/* サマリ (ドラフトベース) */}
-        <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 space-y-1 text-sm">
-          <div className="flex justify-between">
-            <span className="text-slate-600 dark:text-slate-300">累計回転</span>
-            <span className="font-semibold text-slate-900 dark:text-white">
-              {(draft.rotations || 0).toLocaleString()} 回
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-600 dark:text-slate-300">投資 (現金)</span>
-            <span className="font-semibold text-slate-900 dark:text-white">
-              ¥{cashInv.toLocaleString()}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-600 dark:text-slate-300">1Kあたり回転数</span>
-            <span className="font-semibold text-slate-900 dark:text-white">
-              {perK.toFixed(1)} 回 {machine ? `(B:${border.toFixed(1)})` : ''}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-600 dark:text-slate-300">期待値</span>
-            <span
-              className={`font-semibold ${
-                ev >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-              }`}
-            >
-              {formatSignedYen(ev)}
-            </span>
-          </div>
-          {draft.isSession && (
-            <div className="flex justify-between">
-              <span className="text-slate-600 dark:text-slate-300">収支</span>
-              <span
-                className={`font-semibold ${
-                  profit >= 0
-                    ? 'text-green-600 dark:text-green-400'
-                    : 'text-red-600 dark:text-red-400'
-                }`}
-              >
-                {formatSignedYen(profit)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* 保存 / キャンセル */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={handleCancel}
-            className="bg-slate-300 dark:bg-slate-600 dark:text-white py-2 rounded-lg font-medium text-sm"
-          >
-            キャンセル
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!isDirty}
-            className="bg-blue-600 text-white py-2 rounded-lg font-medium text-sm disabled:opacity-50"
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (records.length === 0) {
-    return (
-      <div className="p-8 text-center text-slate-500 dark:text-slate-400">
-        まだ記録がありません
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 space-y-4">
-      {/* 年→月→記録 */}
-      <div className="space-y-3">
-        {groups.map((yg) => {
-          const yKey = 'y:' + yg.year;
-          const yOpen = isExpanded(yKey);
-          return (
-            <div
-              key={yg.year}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
-            >
-              <button
-                onClick={() => toggle(yKey)}
-                className="w-full p-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-left"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-slate-400 text-sm w-4">{yOpen ? '▾' : '▸'}</span>
-                    <span className="font-bold text-slate-900 dark:text-white">{yg.year}年</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      ({yg.count}件)
-                    </span>
-                  </div>
-                  <div className="flex gap-3 text-xs font-medium">
-                    <span
-                      className={
-                        yg.summary.totalExpectedValue >= 0
-                          ? 'text-green-600 dark:text-green-400'
-                          : 'text-red-600 dark:text-red-400'
-                      }
-                    >
-                      期:{formatSignedYen(yg.summary.totalExpectedValue)}
-                    </span>
-                    <span
-                      className={
-                        yg.profit >= 0
-                          ? 'text-green-600 dark:text-green-400'
-                          : 'text-red-600 dark:text-red-400'
-                      }
-                    >
-                      収:{formatSignedYen(yg.profit)}
-                    </span>
-                  </div>
-                </div>
-              </button>
-              {yOpen && (
-                <div className="border-t border-slate-200 dark:border-slate-700 p-2 space-y-2">
-                  {yg.months.map((mg) => {
-                    const mKey = 'm:' + mg.month;
-                    const mOpen = isExpanded(mKey);
-                    const monthLabel = String(parseInt(mg.month.slice(5), 10));
-                    return (
-                      <div
-                        key={mg.month}
-                        className="bg-slate-50 dark:bg-slate-900/40 rounded overflow-hidden"
-                      >
-                        <button
-                          onClick={() => toggle(mKey)}
-                          className="w-full p-2 hover:bg-slate-100 dark:hover:bg-slate-700/50 text-left"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-400 text-sm w-4">
-                                {mOpen ? '▾' : '▸'}
-                              </span>
-                              <span className="font-medium text-slate-800 dark:text-slate-100 text-sm">
-                                {monthLabel}月
-                              </span>
-                              <span className="text-xs text-slate-500 dark:text-slate-400">
-                                ({mg.records.length}件)
-                              </span>
-                            </div>
-                            <div className="flex gap-3 text-xs font-medium">
-                              <span
-                                className={
-                                  mg.summary.totalExpectedValue >= 0
-                                    ? 'text-green-600 dark:text-green-400'
-                                    : 'text-red-600 dark:text-red-400'
-                                }
-                              >
-                                期:{formatSignedYen(mg.summary.totalExpectedValue)}
-                              </span>
-                              <span
-                                className={
-                                  mg.profit >= 0
-                                    ? 'text-green-600 dark:text-green-400'
-                                    : 'text-red-600 dark:text-red-400'
-                                }
-                              >
-                                収:{formatSignedYen(mg.profit)}
-                              </span>
-                            </div>
-                          </div>
-                        </button>
-                        {mOpen && (
-                          <div className="p-2 pt-0 space-y-2">
-                            {mg.days.map((dg) => {
-                              const dKey = 'd:' + dg.day;
-                              const dOpen = isExpanded(dKey);
-                              const dayLabel = String(parseInt(dg.day.slice(8), 10));
-                              return (
-                                <div
-                                  key={dg.day}
-                                  className="bg-white dark:bg-slate-800/60 rounded overflow-hidden border border-slate-200 dark:border-slate-700"
-                                >
-                                  <button
-                                    onClick={() => toggle(dKey)}
-                                    className="w-full p-2 hover:bg-slate-50 dark:hover:bg-slate-700/40 text-left"
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-slate-400 text-sm w-4">
-                                          {dOpen ? '▾' : '▸'}
-                                        </span>
-                                        <span className="font-medium text-slate-800 dark:text-slate-100 text-sm">
-                                          {dayLabel}日
-                                        </span>
-                                        <span className="text-xs text-slate-500 dark:text-slate-400">
-                                          ({dg.records.length}件)
-                                        </span>
-                                      </div>
-                                      <div className="flex gap-3 text-xs font-medium">
-                                        <span
-                                          className={
-                                            dg.summary.totalExpectedValue >= 0
-                                              ? 'text-green-600 dark:text-green-400'
-                                              : 'text-red-600 dark:text-red-400'
-                                          }
-                                        >
-                                          期:{formatSignedYen(dg.summary.totalExpectedValue)}
-                                        </span>
-                                        <span
-                                          className={
-                                            dg.profit >= 0
-                                              ? 'text-green-600 dark:text-green-400'
-                                              : 'text-red-600 dark:text-red-400'
-                                          }
-                                        >
-                                          収:{formatSignedYen(dg.profit)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </button>
-                                  {dOpen && (
-                                    <div className="p-2 pt-0 space-y-2">
-                                      {dg.records.map((r) => (
-                                        <RecordCard
-                                          key={r.id}
-                                          r={r}
-                                          machineMap={machineMap}
-                                          onOpen={() => setEditingId(r.id)}
-                                        />
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+function RecordCard({ record, machine, onOpen }) {
+  const stats = recordStats(record, machine);
+  const amount = stats.profit ?? stats.ev;
+  return <article className="surface record-card">
+    <div className="record-card-top">
+      <div className="record-card-title"><h3>{machine?.name || '削除済みの機種'}</h3><p className="record-card-subtitle">{record.exchangeId === '25' ? '25玉交換（等価）' : record.exchangeId === '28' ? '28玉交換' : '遊技記録'}{record.notes ? `・${record.notes}` : ''}</p></div>
+      <div className={`record-card-amount ${amount >= 0 ? 'positive' : 'negative'}`}><small>{stats.profit === null ? '期待値' : '収支'}</small>{signedYen(amount)}</div>
     </div>
-  );
+    <div className="record-card-stats"><div><span>現金投資</span><strong>¥{stats.cash.toLocaleString()}</strong></div><div><span>回転率</span><strong>{stats.perK > 0 ? stats.perK.toFixed(1) : '—'} <span style={{ display: 'inline', fontSize: 10 }}>回/1K</span></strong></div></div>
+    <button type="button" className="secondary-button card-edit-button" onClick={onOpen}><Icon name="edit" size={17} />記録の詳細・編集</button>
+  </article>;
+}
+
+export default function RecordList({ records, machines, onDelete, onUpdate, onNewRecord }) {
+  const machineMap = useMemo(() => Object.fromEntries(machines.map(machine => [machine.id, machine])), [machines]);
+  const [editingId, setEditingId] = useState(null);
+  const [monthChoice, setMonthChoice] = useState('');
+  const [view, setView] = useState('list');
+  const [query, setQuery] = useState('');
+  const [selectedDay, setSelectedDay] = useState('');
+  const [message, setMessage] = useState('');
+  const latestMonth = records.reduce((latest, record) => record.date?.slice(0, 7) > latest ? record.date.slice(0, 7) : latest, '');
+  const month = monthChoice || latestMonth || monthOfToday();
+  const monthOptions = [...new Set([month, monthOfToday(), ...records.map(record => record.date?.slice(0, 7)).filter(Boolean)])].sort().reverse();
+  const monthRecords = records.filter(record => record.date?.startsWith(month));
+  const summary = monthRecords.reduce((result, record) => {
+    const stats = recordStats(record, machineMap[record.machineId]);
+    return { profit: result.profit + (stats.profit || 0), ev: result.ev + stats.ev, cash: result.cash + stats.cash };
+  }, { profit: 0, ev: 0, cash: 0 });
+  const daysCount = new Set(monthRecords.map(record => record.date)).size;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filtered = monthRecords.filter(record => !normalizedQuery || `${machineMap[record.machineId]?.name || ''} ${record.notes || ''} ${record.date}`.toLocaleLowerCase().includes(normalizedQuery));
+  const groups = [...new Set(filtered.map(record => record.date))].sort().reverse().map(date => ({
+    date,
+    records: filtered.filter(record => record.date === date).sort((a, b) => (b.createdAt || b.startedAt || '').localeCompare(a.createdAt || a.startedAt || '')),
+  }));
+  const shownGroups = view === 'calendar' && selectedDay ? groups.filter(group => group.date === selectedDay) : groups;
+  const changeMonth = value => { setMonthChoice(value); setSelectedDay(''); };
+  const editingRecord = records.find(record => record.id === editingId);
+
+  if (editingRecord) return <RecordDetail key={editingId} record={editingRecord} machines={machines} machine={machineMap[editingRecord.machineId]} onUpdate={onUpdate} onBack={() => setEditingId(null)} onDelete={() => { onDelete(editingId); setEditingId(null); setMessage('記録を削除しました。'); }} />;
+
+  return <div className="page">
+    <PageHeader eyebrow="YOUR NOTEBOOK" title="記録ノート" description="日々の記録を、見つけやすく、直しやすく。" />
+    <Notice>{message}</Notice>
+    <div className="surface month-summary">
+      <div className="month-control">
+        <label><span className="sr-only">表示する月</span><select aria-label="表示する月" value={month} onChange={e => changeMonth(e.target.value)}>{monthOptions.map(value => <option key={value} value={value}>{Number(value.slice(0, 4))}年{Number(value.slice(5))}月</option>)}</select><Icon name="next" size={16} /></label>
+        <button type="button" className="icon-button" aria-label="前の月" onClick={() => changeMonth(shiftMonth(month, -1))}><Icon name="back" size={18} /></button>
+        <button type="button" className="icon-button" aria-label="次の月" onClick={() => changeMonth(shiftMonth(month, 1))}><Icon name="next" size={18} /></button>
+      </div>
+      <div className="metrics-grid">
+        <div className="metric"><div className="metric-label">今月の収支</div><div className={`metric-value ${summary.profit >= 0 ? 'positive' : 'negative'}`}>{signedYen(summary.profit)}</div></div>
+        <div className="metric"><div className="metric-label">記録した日</div><div className="metric-value">{daysCount}<small>日 / {monthRecords.length}件</small></div></div>
+      </div>
+      <div className="month-substats"><span>現金投資 ¥{summary.cash.toLocaleString()}</span><span>期待値 {signedYen(summary.ev)}</span></div>
+    </div>
+    <label className="search-field"><Icon name="search" size={18} /><input aria-label="この月の記録を検索" type="search" value={query} onChange={e => { setQuery(e.target.value); setSelectedDay(''); }} placeholder="この月の機種・メモを検索" />{query && <button type="button" className="icon-button" aria-label="検索をクリア" onClick={() => setQuery('')}><Icon name="close" size={16} /></button>}</label>
+    <div className="segmented-control" aria-label="履歴の表示方法"><button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}><Icon name="list" size={17} />一覧</button><button type="button" aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}><Icon name="calendar" size={17} />カレンダー</button></div>
+    {view === 'calendar' && <Calendar month={month} groups={groups} machineMap={machineMap} selectedDay={selectedDay} onSelect={setSelectedDay} />}
+    {selectedDay && view === 'calendar' && <button type="button" className="quiet-button full-width" onClick={() => setSelectedDay('')}>日付の選択を解除</button>}
+    {!records.length ? <EmptyState title="最初の記録を残しましょう" description="遊技を終了して保存すると、ここに履歴が並びます。" /> : shownGroups.length === 0 ? <EmptyState title="記録が見つかりません" description={query ? '検索する言葉や表示する月を変えてみてください。' : 'この期間の記録はまだありません。'} /> :
+      shownGroups.map(group => <section className="date-group" key={group.date}><div className="date-group-title"><h2>{dateLabel(group.date)}</h2><span>{group.records.length}件の記録</span></div>{group.records.map(record => <RecordCard key={record.id} record={record} machine={machineMap[record.machineId]} onOpen={() => setEditingId(record.id)} />)}</section>)}
+    <div className="list-footer"><button type="button" className="primary-button full-width" onClick={onNewRecord}><Icon name="plus" size={18} />新しい記録</button></div>
+  </div>;
+}
+
+function Calendar({ month, groups, machineMap, selectedDay, onSelect }) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const firstDay = new Date(year, monthNumber - 1, 1).getDay();
+  const days = new Date(year, monthNumber, 0).getDate();
+  return <div className="surface calendar"><div className="calendar-grid">
+    {['日', '月', '火', '水', '木', '金', '土'].map(day => <span className="calendar-weekday" key={day}>{day}</span>)}
+    {Array.from({ length: firstDay }, (_, i) => <span key={`blank-${i}`} />)}
+    {Array.from({ length: days }, (_, index) => {
+      const day = index + 1;
+      const date = `${month}-${String(day).padStart(2, '0')}`;
+      const group = groups.find(item => item.date === date);
+      const profit = group?.records.reduce((sum, record) => sum + (recordStats(record, machineMap[record.machineId]).profit || 0), 0) || 0;
+      return <button key={day} type="button" disabled={!group} aria-label={`${day}日${group ? `、${group.records.length}件の記録` : '、記録なし'}`} aria-pressed={selectedDay === date} className={`calendar-day ${group ? 'has-record' : ''}`} onClick={() => onSelect(selectedDay === date ? '' : date)}>{day}<span className={`calendar-dot ${profit < 0 ? 'negative' : ''}`} style={{ visibility: group ? 'visible' : 'hidden' }} /></button>;
+    })}
+  </div></div>;
+}
+
+function RecordDetail({ record, machine, machines, onUpdate, onBack, onDelete }) {
+  const [view, setView] = useState(record.isSession ? 'details' : 'overview');
+  const [pending, setPending] = useState(false);
+  const [notice, setNotice] = useState('');
+  const stats = recordStats(record, machine);
+  const leave = callback => {
+    if (pending && !confirm('保存していない変更を破棄しますか？')) return;
+    setPending(false); callback();
+  };
+  return <div className="page">
+    <PageHeader title={`${dateLabel(record.date)}の記録`} back={() => leave(onBack)} actions={<details className="more-menu"><summary className="icon-button" aria-label="記録のメニュー"><Icon name="more" /></summary><div className="more-menu-popover"><button type="button" onClick={() => { if (confirm('この遊技記録を削除しますか？元に戻せません。')) onDelete(); }}>この記録を削除</button></div></details>} />
+    <div className="detail-machine"><h2>{machine?.name || '削除済みの機種'}</h2><p>{record.exchangeId === '25' ? '25玉交換（等価）' : record.exchangeId === '28' ? '28玉交換' : '遊技記録'}{record.notes ? `・${record.notes}` : ''}</p></div>
+    <Notice>{notice}</Notice>
+    {record.isSession && <div className="segmented-control detail-tabs"><button type="button" aria-pressed={view === 'overview'} onClick={() => { if (view !== 'overview') leave(() => setView('overview')); }}>概要・メモ</button><button type="button" aria-pressed={view === 'details'} onClick={() => { if (view !== 'details') leave(() => setView('details')); }}>記録の詳細</button></div>}
+    {view === 'details' ? <SessionDetail session={record} includeEndRow onChange={onUpdate} onDirtyChange={setPending} /> : <>
+      <div className="surface" style={{ marginBottom: 20 }}><dl className="stats-list">
+        <div><dt>収支</dt><dd className={(stats.profit || 0) >= 0 ? 'positive' : 'negative'}>{stats.profit === null ? '—' : signedYen(stats.profit)}</dd></div>
+        <div><dt>現金投資</dt><dd>¥{stats.cash.toLocaleString()}</dd></div>
+        <div><dt>累計回転数</dt><dd>{(Number(record.rotations) || 0).toLocaleString()} 回</dd></div>
+        <div><dt>回転率</dt><dd>{stats.perK.toFixed(1)} 回/1K</dd></div>
+        <div><dt>期待値</dt><dd className={stats.ev >= 0 ? 'positive' : 'negative'}>{signedYen(stats.ev)}</dd></div>
+      </dl></div>
+      <RecordMetaForm record={record} machines={machines} onDirtyChange={setPending} onSave={updated => { onUpdate(updated); setPending(false); setNotice('記録の基本情報を保存しました。'); }} />
+    </>}
+  </div>;
+}
+
+function RecordMetaForm({ record, machines, onDirtyChange, onSave }) {
+  const [values, setValues] = useState(() => ({
+    date: record.date, machineId: record.machineId, notes: record.notes || '',
+    exchangeId: record.exchangeId || ((record.exchangeRate ?? 4) === 4 ? '25' : (record.exchangeRate === 100 / 28 ? '28' : 'custom')),
+    rotations: String(record.rotations ?? 0), investment: String(record.investment ?? 0),
+  }));
+  const [initial, setInitial] = useState(values);
+  const dirty = JSON.stringify(values) !== JSON.stringify(initial);
+  const update = (key, value) => {
+    const next = { ...values, [key]: value };
+    setValues(next); onDirtyChange(JSON.stringify(next) !== JSON.stringify(initial));
+  };
+  const exchangeRate = values.exchangeId === '25' ? 4 : values.exchangeId === '28' ? 100 / 28 : record.exchangeRate ?? 4;
+  const selectable = machines.filter(machine => !machine.deleted || machine.id === record.machineId);
+  const save = e => {
+    e.preventDefault();
+    onSave({
+      ...record, date: values.date, machineId: values.machineId, notes: values.notes,
+      exchangeId: values.exchangeId, exchangeRate,
+      ...(!record.isSession ? { rotations: Number(values.rotations), investment: Number(values.investment) } : {}),
+    });
+    setInitial(values);
+  };
+  return <form onSubmit={save}>
+    <h2 className="section-heading">基本情報を編集</h2>
+    <div className="surface stack">
+      <label><span className="form-label">日付</span><input type="date" className="text-input" required value={values.date} onChange={e => update('date', e.target.value)} /></label>
+      <div><label className="form-label">機種</label><MachineSelector machines={selectable} value={values.machineId} onChange={value => update('machineId', value)} exchangeRate={exchangeRate} /></div>
+      <label><span className="form-label">交換レート</span><select className="select-input" value={values.exchangeId} onChange={e => update('exchangeId', e.target.value)}><option value="28">28玉交換</option><option value="25">25玉交換（等価）</option>{values.exchangeId === 'custom' && <option value="custom">保存時のレート</option>}</select></label>
+      <label><span className="form-label">メモ（任意）</span><textarea className="text-input" value={values.notes} onChange={e => update('notes', e.target.value)} placeholder="ホール名、台番号など" /></label>
+      {!record.isSession && <><NumberField label="総回転数" suffix="回" value={values.rotations} onChange={value => update('rotations', value)} /><NumberField label="現金投資" suffix="円" value={values.investment} onChange={value => update('investment', value)} /></>}
+    </div>
+    <div className="sticky-actions"><button type="submit" className="primary-button full-width" disabled={!dirty}>変更を保存</button><button type="button" className="quiet-button full-width" disabled={!dirty} onClick={() => { setValues(initial); onDirtyChange(false); }}>変更を取り消す</button></div>
+  </form>;
 }
