@@ -1,467 +1,228 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { calcExpectedValue, calcSessionExpectedValue } from '../utils/calculations';
+import { EmptyState, Icon } from './ui/Ui';
 
-// セッション記録の収支 (円)
-function recordProfit(r, machineMap) {
-  if (!r.isSession) return 0;
-  const m = machineMap[r.machineId];
-  const rate = r.exchangeRate ?? m?.exchangeRate ?? 4;
-  const cash = Number(r.totalInvestment ?? r.investment) || 0;
-  const startBalls = Number(r.startBalls) || 0;
-  const endBalls = Number(r.endBalls) || 0;
-  return (endBalls - startBalls) * rate - cash;
+const PROFIT_COLOR = '#65dbc7';
+const EV_COLOR = '#f3cb78';
+
+function recordProfit(record, machineMap) {
+  if (!record.isSession) return 0;
+  const rate = record.exchangeRate ?? machineMap[record.machineId]?.exchangeRate ?? 4;
+  const cash = Number(record.totalInvestment ?? record.investment) || 0;
+  return ((Number(record.endBalls) || 0) - (Number(record.startBalls) || 0)) * rate - cash;
 }
 
-function recordEV(r, machineMap) {
-  const m = machineMap[r.machineId];
-  if (!m) return 0;
-  return r.isSession
-    ? calcSessionExpectedValue(r, m)
-    : calcExpectedValue({
-        totalRotations: r.rotations,
-        investment: r.investment,
-        machine: m,
-      });
+function recordEV(record, machineMap) {
+  const machine = machineMap[record.machineId];
+  if (!machine) return 0;
+  return record.isSession
+    ? calcSessionExpectedValue(record, machine)
+    : calcExpectedValue({ totalRotations: record.rotations, investment: record.investment, machine });
 }
 
-function formatSignedYen(n) {
-  const rounded = Math.round(n);
-  const sign = rounded >= 0 ? '+' : '';
-  return `${sign}¥${rounded.toLocaleString()}`;
-}
-
-// yen を K/M 単位に丸めた軸ラベル
-function fmtAxis(n) {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
-  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return `${Math.round(n)}`;
-}
-
-const PROFIT_COLOR = '#16a34a'; // green-600
-const EV_COLOR = '#2563eb'; // blue-600
-
-function lastDayOfMonth(year, month /* 1-12 */) {
-  return new Date(year, month, 0).getDate();
-}
-
-function shiftMonth({ year, month }, delta) {
-  let y = year;
-  let m = month + delta;
-  while (m < 1) {
-    m += 12;
-    y -= 1;
-  }
-  while (m > 12) {
-    m -= 12;
-    y += 1;
-  }
-  return { year: y, month: m };
+function signedYen(value) {
+  const rounded = Math.round(value);
+  return `${rounded < 0 ? '−' : '+'}¥${Math.abs(rounded).toLocaleString('ja-JP')}`;
 }
 
 function defaultMonth(records) {
-  let latest = '';
-  for (const r of records) {
-    if (r.date && r.date > latest) latest = r.date;
-  }
-  if (latest) {
-    return {
-      year: Number(latest.slice(0, 4)),
-      month: Number(latest.slice(5, 7)),
-    };
-  }
+  const latest = records.reduce((value, record) => /^\d{4}-\d{2}-\d{2}$/.test(record.date || '') && record.date > value ? record.date : value, '');
+  if (latest) return latest.slice(0, 7);
   const now = new Date();
-  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function shiftMonth(month, amount) {
+  const [year, number] = month.split('-').map(Number);
+  const index = year * 12 + number - 1 + amount;
+  return `${String(Math.floor(index / 12)).padStart(4, '0')}-${String(index % 12 + 1).padStart(2, '0')}`;
+}
+
+function makeScale(series) {
+  const values = [0, ...series.flatMap(day => [day.profit, day.ev])];
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) { min -= 1000; max += 1000; }
+  const padding = Math.max(200, (max - min) * 0.1);
+  const roughStep = (max - min + 2 * padding) / 4;
+  const power = 10 ** Math.floor(Math.log10(roughStep));
+  const base = roughStep / power;
+  const step = (base <= 1 ? 1 : base <= 2 ? 2 : base <= 5 ? 5 : 10) * power;
+  const low = Math.floor((min - padding) / step) * step;
+  const high = Math.ceil((max + padding) / step) * step;
+  const ticks = Array.from({ length: Math.round((high - low) / step) + 1 }, (_, i) => low + i * step);
+  const format = value => {
+    const absolute = Number((Math.abs(value) / 10000).toFixed(4));
+    return `${value < 0 ? '−' : ''}${absolute.toLocaleString('ja-JP', { maximumFractionDigits: 4 })}`;
+  };
+  return { min: low, max: high, ticks, format };
+}
+
+function CumulativeGraph({ series, selectedDay, onSelect, visible }) {
+  const containerRef = useRef(null);
+  const gestureRef = useRef(null);
+  const [width, setWidth] = useState(320);
+  const titleId = useId();
+  const descriptionId = useId();
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setWidth(Math.floor(entry.contentRect.width));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const scale = useMemo(() => makeScale(series), [series]);
+  const height = 320;
+  const left = Math.max(42, ...scale.ticks.map(value => scale.format(value).length * 7.5 + 12));
+  const right = width - 14;
+  const top = 28;
+  const bottom = height - 46;
+  const last = series[series.length - 1];
+  const plotWidth = Math.max(1, right - left);
+  const xAt = day => left + day / last.day * plotWidth;
+  const yAt = value => top + (scale.max - value) / (scale.max - scale.min) * (bottom - top);
+  const selected = series.find(day => day.day === selectedDay) || last;
+  const tickDays = [...new Set([0, Math.round(last.day / 3), Math.round(last.day * 2 / 3), last.day])];
+  const selectAt = (element, clientX) => {
+    const box = element.getBoundingClientRect();
+    const x = (clientX - box.left) / box.width * width;
+    const day = Math.max(1, Math.min(last.day, Math.round((x - left) / plotWidth * last.day)));
+    onSelect(day);
+  };
+  const handleMove = event => {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.id !== event.pointerId) return;
+    const dx = event.clientX - gesture.x;
+    const dy = event.clientY - gesture.y;
+    if (!gesture.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
+      gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    if (gesture.axis === 'x') selectAt(event.currentTarget, event.clientX);
+  };
+  const handleUp = event => {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (!gesture || gesture.id !== event.pointerId || gesture.axis === 'y') return;
+    selectAt(event.currentTarget, event.clientX);
+  };
+
+  return <div className="trend-graph" ref={containerRef}>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} className="trend-svg" role="img" aria-labelledby={`${titleId} ${descriptionId}`}
+      onPointerDown={event => {
+        if (!event.isPrimary || event.button !== 0) return;
+        gestureRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, axis: null };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      }}
+      onPointerMove={handleMove} onPointerUp={handleUp} onPointerCancel={() => { gestureRef.current = null; }}>
+      <title id={titleId}>月初からの累計収支と累計期待値</title>
+      <desc id={descriptionId}>縦軸は万円、横軸は日付。収支はミントの実線、期待値は黄色の破線。最終記録日までを表示します。選択中は{selected.day}日、累計収支{signedYen(selected.profit)}、累計期待値{signedYen(selected.ev)}です。下の日付選択からも金額を確認できます。</desc>
+      <text x="0" y="13" className="trend-axis-title">累計（万円）</text>
+      {scale.ticks.map(value => <g key={value}>
+        <line x1={left} x2={right} y1={yAt(value)} y2={yAt(value)} className={value === 0 ? 'trend-zero-line' : 'trend-grid-line'} />
+        <text x={left - 10} y={yAt(value) + 4} textAnchor="end" className={value === 0 ? 'trend-zero-label' : undefined}>{scale.format(value)}</text>
+      </g>)}
+      <line x1={xAt(selected.day)} x2={xAt(selected.day)} y1={top} y2={bottom} className="trend-selection-line" />
+      {['ev', 'profit'].filter(name => visible[name]).map(name => <g key={name}>
+        <path d={series.map((day, i) => `${i === 0 ? 'M' : 'L'} ${xAt(day.day)} ${yAt(day[name])}`).join(' ')} fill="none" stroke={name === 'profit' ? PROFIT_COLOR : EV_COLOR} strokeWidth="3.2" strokeDasharray={name === 'ev' ? '7 5' : undefined} strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={xAt(selected.day)} cy={yAt(selected[name])} r="5" fill={name === 'profit' ? PROFIT_COLOR : EV_COLOR} stroke="var(--surface)" strokeWidth="2" />
+      </g>)}
+      {tickDays.map((day, index) => <text key={day} x={xAt(day)} y={bottom + 22} textAnchor={index === 0 ? 'start' : index === tickDays.length - 1 ? 'end' : 'middle'}>{day === 0 ? '月初' : `${day}日`}</text>)}
+      <text x={right} y={height - 3} textAnchor="end" className="trend-axis-title">日付（日）</text>
+    </svg>
+  </div>;
 }
 
 export default function ProfitChart({ records, machines }) {
-  const machineMap = useMemo(
-    () => Object.fromEntries(machines.map((m) => [m.id, m])),
-    [machines],
-  );
-  const [current, setCurrent] = useState(() => defaultMonth(records));
-  const lastDay = lastDayOfMonth(current.year, current.month);
-  const ymPrefix = `${current.year}-${String(current.month).padStart(2, '0')}`;
-
-  // 月内の日次/累計データ (1日〜末日まで全日埋め)
-  const series = useMemo(() => {
-    const profitByDay = new Map();
-    const evByDay = new Map();
-    for (const r of records) {
-      const d = r.date || '';
-      if (!d.startsWith(ymPrefix)) continue;
-      const day = Number(d.slice(8, 10));
-      profitByDay.set(day, (profitByDay.get(day) || 0) + recordProfit(r, machineMap));
-      evByDay.set(day, (evByDay.get(day) || 0) + recordEV(r, machineMap));
+  const dateControlId = useId();
+  const machineMap = useMemo(() => Object.fromEntries(machines.map(machine => [machine.id, machine])), [machines]);
+  const [monthChoice, setMonthChoice] = useState(null);
+  const [selection, setSelection] = useState(null);
+  const [visible, setVisible] = useState({ profit: true, ev: true });
+  const month = monthChoice || defaultMonth(records);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const lastCalendarDay = new Date(year, monthNumber, 0).getDate();
+  const months = [...new Set([month, defaultMonth([]), ...records.filter(record => /^\d{4}-\d{2}-\d{2}$/.test(record.date || '')).map(record => record.date.slice(0, 7))])].sort().reverse();
+  const { series, recordedDays, count } = useMemo(() => {
+    const days = new Map();
+    let count = 0;
+    for (const record of records) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date || '') || !record.date.startsWith(month)) continue;
+      const day = Number(record.date.slice(8, 10));
+      if (day < 1 || day > lastCalendarDay) continue;
+      const item = days.get(day) || { profitDaily: 0, evDaily: 0, count: 0 };
+      item.profitDaily += recordProfit(record, machineMap);
+      item.evDaily += recordEV(record, machineMap);
+      item.count += 1;
+      count += 1;
+      days.set(day, item);
     }
-    let pAcc = 0;
-    let eAcc = 0;
-    const days = [];
-    for (let d = 1; d <= lastDay; d++) {
-      const pDaily = profitByDay.get(d) || 0;
-      const eDaily = evByDay.get(d) || 0;
-      pAcc += pDaily;
-      eAcc += eDaily;
-      days.push({
-        day: d,
-        profitDaily: pDaily,
-        evDaily: eDaily,
-        profit: pAcc,
-        ev: eAcc,
-      });
+    const endDay = days.size ? Math.max(...days.keys()) : 0;
+    let profit = 0, ev = 0;
+    const series = [{ day: 0, profit: 0, ev: 0, profitDaily: 0, evDaily: 0, count: 0 }];
+    for (let day = 1; day <= endDay; day++) {
+      const item = days.get(day) || { profitDaily: 0, evDaily: 0, count: 0 };
+      profit += item.profitDaily; ev += item.evDaily;
+      series.push({ day, ...item, profit, ev });
     }
-    return days;
-  }, [records, machineMap, ymPrefix, lastDay]);
-
-  const hasData = useMemo(
-    () => series.some((s) => s.profitDaily !== 0 || s.evDaily !== 0),
-    [series],
-  );
-
-  // SVG 座標系
-  const W = 360;
-  const H = 220;
-  const padL = 38;
-  const padR = 12;
-  const padT = 12;
-  const padB = 38;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-
-  // Y 軸範囲: 収支・期待値の累計と 0 を含み、上下に余白を確保 + ナイス数で丸め
-  const { yMin, yMax, yRange, yTicks } = useMemo(() => {
-    const allY = series.flatMap((s) => [s.profit, s.ev]);
-    let rawMin = Math.min(0, ...allY);
-    let rawMax = Math.max(0, ...allY);
-    // データなし or フラット時は ±1000 で初期表示
-    if (rawMin === rawMax) {
-      rawMin -= 1000;
-      rawMax += 1000;
-    }
-    const span = rawMax - rawMin;
-    // 上下に 12% パディング (データが境界に張り付かないように)
-    const pad = span * 0.12;
-    const padMin = rawMin - pad;
-    const padMax = rawMax + pad;
-
-    // 目標ティック数からきりの良いステップを算出 (1/2/5 × 10^k)
-    const niceStep = (range, target = 5) => {
-      const rough = range / target;
-      if (rough <= 0) return 1;
-      const exp = Math.floor(Math.log10(rough));
-      const base = rough / Math.pow(10, exp);
-      let nice;
-      if (base < 1.5) nice = 1;
-      else if (base < 3) nice = 2;
-      else if (base < 7) nice = 5;
-      else nice = 10;
-      return nice * Math.pow(10, exp);
-    };
-    const step = niceStep(padMax - padMin);
-    let yMin = Math.floor(padMin / step) * step;
-    let yMax = Math.ceil(padMax / step) * step;
-    // 0 を必ず含める
-    if (yMin > 0) yMin = 0;
-    if (yMax < 0) yMax = 0;
-    const yRange = yMax - yMin || 1;
-    const yTicks = [];
-    for (let v = yMin; v <= yMax + step / 2; v += step) {
-      yTicks.push(Math.round(v));
-    }
-    return { yMin, yMax, yRange, yTicks };
-  }, [series]);
-
-  const xAt = (day) =>
-    lastDay === 1
-      ? padL + plotW / 2
-      : padL + ((day - 1) / (lastDay - 1)) * plotW;
-  const yAt = (v) => padT + ((yMax - v) / yRange) * plotH;
-
-  const profitPath = series
-    .map(
-      (s, i) =>
-        `${i === 0 ? 'M' : 'L'} ${xAt(s.day).toFixed(1)} ${yAt(s.profit).toFixed(1)}`,
-    )
-    .join(' ');
-  const evPath = series
-    .map(
-      (s, i) =>
-        `${i === 0 ? 'M' : 'L'} ${xAt(s.day).toFixed(1)} ${yAt(s.ev).toFixed(1)}`,
-    )
-    .join(' ');
-
+    return { series, recordedDays: series.filter(day => day.count > 0), count };
+  }, [records, machineMap, month, lastCalendarDay]);
   const last = series[series.length - 1];
+  const hasData = count > 0;
+  const selected = series.find(day => day.day === (selection?.month === month ? selection.day : last.day)) || last;
+  const selectDay = day => setSelection({ month, day });
+  const changeMonth = value => { setMonthChoice(value); setSelection(null); };
+  const dateOptions = series.filter(day => day.count > 0 || day.day === selected.day).filter(day => day.day > 0);
+  const previous = [...recordedDays].reverse().find(day => day.day < selected.day);
+  const next = recordedDays.find(day => day.day > selected.day);
+  const toggle = name => setVisible(current => ({ ...current, [name]: !current[name] }));
 
-  // チャート上の横スワイプで前月/翌月
-  const touchRef = useRef(null);
-  const onTouchStart = (e) => {
-    const t = e.touches[0];
-    touchRef.current = { x: t.clientX, y: t.clientY, locked: null };
-  };
-  const onTouchMove = (e) => {
-    const ref = touchRef.current;
-    if (!ref) return;
-    const t = e.touches[0];
-    const dx = t.clientX - ref.x;
-    const dy = t.clientY - ref.y;
-    if (!ref.locked && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-      ref.locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-    }
-  };
-  const onTouchEnd = (e) => {
-    const ref = touchRef.current;
-    touchRef.current = null;
-    if (!ref || ref.locked !== 'x') return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - ref.x;
-    if (Math.abs(dx) < 40) return;
-    // 左スワイプ → 翌月、右スワイプ → 前月
-    setCurrent((c) => shiftMonth(c, dx < 0 ? 1 : -1));
-  };
-
-  return (
-    <div className="p-4 space-y-3">
-      {/* 月ナビゲーション */}
-      <div className="flex items-center justify-between bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5">
-        <button
-          type="button"
-          onClick={() => setCurrent(shiftMonth(current, -1))}
-          aria-label="前月"
-          className="px-3 py-1 text-slate-700 dark:text-slate-200 text-lg leading-none hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-        >
-          ◀
-        </button>
-        <div className="font-semibold text-slate-900 dark:text-white">
-          {current.year}年{current.month}月
-        </div>
-        <button
-          type="button"
-          onClick={() => setCurrent(shiftMonth(current, 1))}
-          aria-label="翌月"
-          className="px-3 py-1 text-slate-700 dark:text-slate-200 text-lg leading-none hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-        >
-          ▶
-        </button>
-      </div>
-
-      {/* チャート (横スワイプで月切替) */}
-      <div
-        data-no-swipe
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchEnd}
-        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
-      >
-        <div className="flex items-center justify-between text-xs mb-1">
-          <div className="text-slate-500 dark:text-slate-400">月内累計</div>
-          <div className="flex gap-3">
-            <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
-              <span
-                className="inline-block w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: PROFIT_COLOR }}
-              />
-              収支
-            </span>
-            <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
-              <span
-                className="inline-block w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: EV_COLOR }}
-              />
-              期待値
-            </span>
-          </div>
-        </div>
-
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="w-full h-auto"
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {/* Y軸ティック (水平グリッド + ラベル) */}
-          {yTicks.map((v) => {
-            const isZero = v === 0;
-            return (
-              <g key={`yt-${v}`}>
-                <line
-                  x1={padL}
-                  x2={W - padR}
-                  y1={yAt(v)}
-                  y2={yAt(v)}
-                  stroke={isZero ? '#94a3b8' : '#e2e8f0'}
-                  strokeDasharray={isZero ? undefined : '2,3'}
-                  strokeWidth={isZero ? 1 : 0.8}
-                />
-                <text
-                  x={padL - 4}
-                  y={yAt(v) + 3}
-                  textAnchor="end"
-                  fontSize="9"
-                  fill={isZero ? '#64748b' : '#94a3b8'}
-                >
-                  {fmtAxis(v)}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* 日付の縦グリッド (7日刻み + 末日のみ・薄め) */}
-          {Array.from({ length: lastDay }, (_, i) => i + 1)
-            .filter((d) => d === 1 || d % 7 === 1 || d === lastDay)
-            .map((d) => (
-              <line
-                key={`grid-${d}`}
-                x1={xAt(d)}
-                x2={xAt(d)}
-                y1={padT}
-                y2={H - padB}
-                stroke="#f1f5f9"
-                strokeWidth="0.5"
-              />
-            ))}
-
-          {/* 期待値ライン (先に描画して収支を上に重ねる) */}
-          <path
-            d={evPath}
-            fill="none"
-            stroke={EV_COLOR}
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {series.map((s) => (
-            <circle
-              key={`ev-${s.day}`}
-              cx={xAt(s.day)}
-              cy={yAt(s.ev)}
-              r="1.6"
-              fill={EV_COLOR}
-            />
-          ))}
-
-          {/* 収支ライン */}
-          <path
-            d={profitPath}
-            fill="none"
-            stroke={PROFIT_COLOR}
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {series.map((s) => (
-            <circle
-              key={`p-${s.day}`}
-              cx={xAt(s.day)}
-              cy={yAt(s.profit)}
-              r="1.6"
-              fill={PROFIT_COLOR}
-            />
-          ))}
-
-          {/* X 軸: 7日刻みの日付ラベル (1, 8, 15, 22, 29 + 末日) */}
-          {Array.from({ length: lastDay }, (_, i) => i + 1)
-            .filter((d) => d === 1 || d % 7 === 1 || d === lastDay)
-            .map((d) => (
-              <text
-                key={`lbl-${d}`}
-                x={xAt(d)}
-                y={H - padB + 14}
-                fontSize="9"
-                fill="#94a3b8"
-                textAnchor="middle"
-              >
-                {d}
-              </text>
-            ))}
-        </svg>
-
-        {!hasData && (
-          <div className="mt-1 text-center text-xs text-slate-400 dark:text-slate-500">
-            この月の記録はありません
-          </div>
-        )}
-      </div>
-
-      {/* 当月サマリ */}
-      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 grid grid-cols-2 gap-2 text-center text-xs">
-        <div>
-          <div className="text-slate-500 dark:text-slate-400">月内収支</div>
-          <div
-            className={`font-semibold text-sm ${
-              last.profit >= 0
-                ? 'text-green-600 dark:text-green-400'
-                : 'text-red-600 dark:text-red-400'
-            }`}
-          >
-            {formatSignedYen(last.profit)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500 dark:text-slate-400">月内期待値</div>
-          <div
-            className={`font-semibold text-sm ${
-              last.ev >= 0
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-orange-600 dark:text-orange-400'
-            }`}
-          >
-            {formatSignedYen(last.ev)}
-          </div>
-        </div>
-      </div>
-
-      {/* 日次内訳 (記録のある日のみ・降順) */}
-      {hasData && (
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-          <div className="px-3 py-2 bg-slate-100 dark:bg-slate-700/50 text-xs font-semibold text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
-            日次内訳
-          </div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-slate-500 dark:text-slate-400">
-                <th className="px-2 py-1.5 text-left font-medium">日</th>
-                <th className="px-2 py-1.5 text-right font-medium">収支</th>
-                <th className="px-2 py-1.5 text-right font-medium">期待値</th>
-              </tr>
-            </thead>
-            <tbody>
-              {series
-                .filter((s) => s.profitDaily !== 0 || s.evDaily !== 0)
-                .slice()
-                .reverse()
-                .map((s) => (
-                  <tr
-                    key={s.day}
-                    className="border-t border-slate-100 dark:border-slate-700/60"
-                  >
-                    <td className="px-2 py-1.5 text-slate-800 dark:text-slate-200">
-                      {s.day}日
-                    </td>
-                    <td
-                      className={`px-2 py-1.5 text-right font-semibold ${
-                        s.profitDaily >= 0
-                          ? 'text-green-600 dark:text-green-400'
-                          : 'text-red-600 dark:text-red-400'
-                      }`}
-                    >
-                      {formatSignedYen(s.profitDaily)}
-                    </td>
-                    <td
-                      className={`px-2 py-1.5 text-right font-semibold ${
-                        s.evDaily >= 0
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-orange-600 dark:text-orange-400'
-                      }`}
-                    >
-                      {formatSignedYen(s.evDaily)}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+  return <div className="trend-page">
+    <div className="trend-month-nav">
+      <label><span className="sr-only">表示する月</span><select value={month} aria-label="チャートの表示月" onChange={event => changeMonth(event.target.value)}>{months.map(value => <option key={value} value={value}>{Number(value.slice(0, 4))}年{Number(value.slice(5))}月</option>)}</select></label>
+      <button type="button" className="icon-button" aria-label="前月" disabled={month === '0001-01'} onClick={() => changeMonth(shiftMonth(month, -1))}><Icon name="back" size={18} /></button>
+      <button type="button" className="icon-button" aria-label="翌月" disabled={month === '9999-12'} onClick={() => changeMonth(shiftMonth(month, 1))}><Icon name="next" size={18} /></button>
     </div>
-  );
+    <div className="trend-totals">
+      <div><span>月内収支</span><strong className={last.profit < 0 ? 'negative' : undefined}>{signedYen(last.profit)}</strong></div>
+      <div><span>月内期待値</span><strong className={last.ev < 0 ? 'negative' : undefined}>{signedYen(last.ev)}</strong></div>
+    </div>
+    {!hasData ? <EmptyState title="この月の記録はありません" description="遊技記録を保存すると、月初からの推移が表示されます。" /> : <>
+      <section className="trend-card" aria-label="累計のグラフ">
+        <div className="trend-card-heading"><h2>月初からの推移</h2><span>{monthNumber}/{last.day}まで</span></div>
+        <div className="trend-legend" aria-label="グラフに表示する系列">
+          <button type="button" aria-pressed={visible.profit} disabled={visible.profit && !visible.ev} onClick={() => toggle('profit')}><span className="trend-swatch" />収支</button>
+          <button type="button" aria-pressed={visible.ev} disabled={visible.ev && !visible.profit} onClick={() => toggle('ev')}><span className="trend-swatch trend-swatch-ev" />期待値</button>
+        </div>
+        <CumulativeGraph series={series} selectedDay={selected.day} onSelect={selectDay} visible={visible} />
+        <p className="trend-chart-hint">グラフをタップすると、その日の金額を表示</p>
+      </section>
+      <section className="trend-detail" aria-label="選択日の金額" aria-live="polite" aria-atomic="true">
+        <div className="trend-detail-heading"><h3>{monthNumber}月{selected.day}日</h3><span>{selected.count ? `${selected.count}件の記録` : 'この日の記録なし'}</span></div>
+        <dl className="trend-detail-values">
+          {visible.profit && <div><dt>累計収支</dt><dd className={selected.profit < 0 ? 'negative' : undefined}>{signedYen(selected.profit)}</dd></div>}
+          {visible.ev && <div><dt>累計期待値</dt><dd className={selected.ev < 0 ? 'negative' : undefined}>{signedYen(selected.ev)}</dd></div>}
+        </dl>
+      </section>
+      <div className="trend-date-control">
+        <label htmlFor={dateControlId}>表示する日付</label>
+        <div>
+          <button type="button" className="icon-button" aria-label="前の記録日" disabled={!previous} onClick={() => selectDay(previous.day)}><Icon name="back" size={17} /></button>
+          <select id={dateControlId} value={selected.day} onChange={event => selectDay(Number(event.target.value))}>{dateOptions.map(day => <option key={day.day} value={day.day}>{monthNumber}月{day.day}日{day.count ? '' : '（記録なし）'}</option>)}</select>
+          <button type="button" className="icon-button" aria-label="次の記録日" disabled={!next} onClick={() => selectDay(next.day)}><Icon name="next" size={17} /></button>
+        </div>
+      </div>
+      <details className="trend-daily">
+        <summary>日ごとの内訳<span>{recordedDays.length}日 / {count}件</span></summary>
+        <table><caption className="sr-only">{year}年{monthNumber}月の日ごとの収支と期待値</caption><thead><tr><th scope="col">日付</th><th scope="col">収支</th><th scope="col">期待値</th></tr></thead>
+          <tbody>{[...recordedDays].reverse().map(day => <tr key={day.day} className={selected.day === day.day ? 'is-selected' : ''}>
+            <th scope="row"><button type="button" aria-pressed={selected.day === day.day} onClick={() => selectDay(day.day)}>{day.day}日</button></th>
+            <td className={day.profitDaily < 0 ? 'negative' : undefined}>{signedYen(day.profitDaily)}</td><td className={day.evDaily < 0 ? 'negative' : undefined}>{signedYen(day.evDaily)}</td>
+          </tr>)}</tbody>
+        </table>
+      </details>
+    </>}
+  </div>;
 }
