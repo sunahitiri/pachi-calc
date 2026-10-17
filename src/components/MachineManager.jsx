@@ -49,6 +49,7 @@ export default function MachineManager({ machines, setMachines }) {
   const [dmmUrl, setDmmUrl] = useState('');
   const [dmmLoading, setDmmLoading] = useState(false);
   const [dmmError, setDmmError] = useState('');
+  const [dmmNotice, setDmmNotice] = useState('');
   const [showDmmPaste, setShowDmmPaste] = useState(false);
   const [dmmHtml, setDmmHtml] = useState('');
 
@@ -57,17 +58,23 @@ export default function MachineManager({ machines, setMachines }) {
     setEditing(null);
     setShowForm(false);
     setDmmError('');
+    setDmmNotice('');
     setDmmHtml('');
     setShowDmmPaste(false);
   };
 
   const applySpecToForm = (spec) => {
+    const stamp = spec.archiveTimestamp;
+    const archiveDate = stamp ? `${stamp.slice(0, 4)}/${stamp.slice(4, 6)}/${stamp.slice(6, 8)}` : '';
+    setDmmNotice(archiveDate
+      ? `DMMの取得制限があるため、公開保存版（${archiveDate}）から取得しました。最新情報と異なる場合があるため、内容を確認してください。`
+      : '');
     setForm({
       // 表示テキスト貼り付け等で機種名が取れなかった場合は空欄にして入力を促す
       name: spec.name === '名称不明' ? '' : spec.name,
       probability: spec.probability.toString(),
       averagePayout: spec.averagePayout.toString(),
-      notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)`,
+      notes: `DMM出典 (参考ボーダー: ${spec.referenceBorder ?? '?'}回/1K)${archiveDate ? ` / 公開保存版 ${archiveDate}` : ''}`,
       sourceUrl: spec.sourceUrl || '',
     });
     setEditing(null);
@@ -96,6 +103,7 @@ export default function MachineManager({ machines, setMachines }) {
   };
 
   const handleEdit = (m) => {
+    setDmmNotice('');
     setEditing(m);
     setForm({
       name: m.name,
@@ -124,6 +132,7 @@ export default function MachineManager({ machines, setMachines }) {
 
   const handleDmmFetch = async () => {
     setDmmError('');
+    setDmmNotice('');
     setDmmLoading(true);
     try {
       const spec = await fetchDmmMachine(dmmUrl);
@@ -420,6 +429,11 @@ export default function MachineManager({ machines, setMachines }) {
       )}
 
       {/* 追加フォーム (editing 中はインライン表示するのでここには出さない) */}
+      {dmmNotice && (
+        <div role="status" className="rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 p-3 text-xs text-amber-900 dark:text-amber-100">
+          {dmmNotice}
+        </div>
+      )}
       {showForm && !editing && renderForm(false)}
 
       <div ref={listRef} className="space-y-2">

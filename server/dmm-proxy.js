@@ -1,6 +1,8 @@
+import { fetchArchivedDmm } from './dmm-archive.js';
+
 const DMM_ORIGIN = 'https://p-town.dmm.com';
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 15000;
+const FETCH_TIMEOUT_MS = 25000;
 
 // Cloudflare Workers とローカルの Vite で同じ取得処理を使う。
 export async function handleDmmRequest(request, env = {}, fetcher = globalThis.fetch.bind(globalThis)) {
@@ -68,6 +70,7 @@ export async function handleDmmRequest(request, env = {}, fetcher = globalThis.f
         headers: {
           Accept: 'text/html,application/xhtml+xml',
           'User-Agent': 'pachi-calc/1.0',
+          'Accept-Language': 'ja-JP,ja;q=0.9',
         },
         // Workersはredirect: 'error'に未対応。転送先を追わず3xxを取得エラーにする。
         redirect: 'manual',
@@ -82,11 +85,25 @@ export async function handleDmmRequest(request, env = {}, fetcher = globalThis.f
       }
       break;
     }
+    let archiveTimestamp;
+    let archiveError;
+    if ([403, 502, 503, 504].includes(upstream.status)) {
+      await upstream.body?.cancel();
+      try {
+        const archived = await fetchArchivedDmm(sourceUrl, controller.signal, fetcher);
+        upstream = archived.response;
+        archiveTimestamp = archived.archiveTimestamp;
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        const message = error instanceof Error ? error.message : '';
+        archiveError = /^(保存版|この機種)/.test(message) ? message : '公開保存版にも接続できませんでした。';
+      }
+    }
     if (!upstream.ok) {
       const error = upstream.status === 404
         ? 'DMMにこの機種ページが見つかりません。URLを確認してください。'
         : `DMMから取得できませんでした（HTTP ${upstream.status}）。時間をおいて再試行するか、手動貼り付けを利用してください。`;
-      return json({ error }, upstream.status === 404 ? 404 : 502);
+      return json({ error: archiveError ? `${error}\n${archiveError}` : error }, upstream.status === 404 ? 404 : 502);
     }
 
     const contentType = upstream.headers.get('Content-Type') || '';
@@ -102,7 +119,7 @@ export async function handleDmmRequest(request, env = {}, fetcher = globalThis.f
       return json({ error: '機種ページのサイズが大きすぎるため取得を中断しました。' }, 502);
     }
     // HTMLはJSONの文字列として返し、このAPI上では実行・表示しない。
-    const payload = { html, sourceUrl };
+    const payload = { html, sourceUrl, ...(archiveTimestamp ? { archiveTimestamp } : {}) };
     if (cache) {
       try {
         await cache.put(cacheKey, new Response(JSON.stringify(payload), {

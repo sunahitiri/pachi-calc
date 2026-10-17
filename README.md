@@ -27,7 +27,7 @@ http://localhost:5173 を開く。
 ## iPhoneのDMM自動取得
 
 GitHub Pagesの画面から、専用のCloudflare Workers APIを呼び出してDMMの機種ページを取得する。
-ブラウザからDMMを直接読む際のCORS制限や、従来の公開プロキシの停止に依存しない構成。
+ブラウザからDMMを直接読む際のCORS制限を避け、DMMが取得を拒否した場合はInternet Archiveの公開保存版を利用する構成。
 遊技記録は送信せず、機種番号だけをAPIに送信する。APIはDMMの機種ページ以外を取得できない。
 
 ### 初回のAPI公開
@@ -39,7 +39,9 @@ GitHub Pagesの画面から、専用のCloudflare Workers APIを呼び出してD
 5. GitHub Actionsの「Deploy to GitHub Pages」を実行して画面を再公開する。
 
 公開済みAPIから機種5094の取得を確認済み。DMMへの要求にはアプリ名のUser-Agentを明示する。
-DMMが取得を拒否した場合は、HTTPエラーを表示する。
+DMMが403などで取得を拒否した場合は、Internet Archiveに保存された同じ機種のページを取得する。
+保存版を使用した場合は画面に保存日と注意を表示し、機種のメモにも保存日を残す。
+保存版も見つからない場合はエラーを表示し、手動貼り付けを案内する。
 APIを再公開してもブラウザに保存した遊技記録には影響しない。
 
 ### ローカルで公開APIを使う場合

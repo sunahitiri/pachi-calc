@@ -55,9 +55,9 @@ export function parseSpec(html, sourceUrl = '') {
 }
 
 // 同じ機種の連続取得は避け、翌日以降はDMMの最新内容を取得する。
-const CACHE_KEY = 'pachi-dmm-spec-cache-v2';
+const CACHE_KEY = 'pachi-dmm-spec-cache-v3';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 18000;
+const FETCH_TIMEOUT_MS = 28000;
 
 function readSpecCache() {
   try {
@@ -107,6 +107,7 @@ export async function fetchDmmMachine(value) {
   if (cached?.at > Date.now() - CACHE_TTL_MS &&
       Number.isFinite(cached.spec?.probability) && cached.spec.probability > 0 &&
       Number.isFinite(cached.spec?.averagePayout) && cached.spec.averagePayout > 0 &&
+      (!cached.spec.archiveTimestamp || (typeof cached.spec.archiveTimestamp === 'string' && /^\d{14}$/.test(cached.spec.archiveTimestamp))) &&
       cached.spec.sourceUrl === sourceUrl) {
     return cached.spec;
   }
@@ -141,6 +142,12 @@ export async function fetchDmmMachine(value) {
       throw new Error('取得した機種ページが正しくありません。もう一度取得してください。');
     }
     const spec = parseSpec(payload.html, sourceUrl);
+    if (payload.archiveTimestamp) {
+      if (typeof payload.archiveTimestamp !== 'string' || !/^\d{14}$/.test(payload.archiveTimestamp)) {
+        throw new Error('保存版の日付が正しくありません。');
+      }
+      spec.archiveTimestamp = payload.archiveTimestamp;
+    }
     writeSpecCache(sourceUrl, spec);
     return spec;
   } finally {

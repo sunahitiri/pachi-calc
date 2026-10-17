@@ -75,6 +75,7 @@ describe('iPhoneの公開サイトから専用APIで取得', () => {
       redirect: 'manual', headers: {
         Accept: 'text/html,application/xhtml+xml',
         'User-Agent': 'pachi-calc/1.0',
+        'Accept-Language': 'ja-JP,ja;q=0.9',
       },
     }));
     expect(JSON.stringify(browserFetch.mock.calls)).not.toContain('record-data');
@@ -83,7 +84,7 @@ describe('iPhoneの公開サイトから専用APIで取得', () => {
   });
 
   it('24時間を過ぎたキャッシュは取り直す', async () => {
-    localStorage.setItem('pachi-dmm-spec-cache-v2', JSON.stringify({
+    localStorage.setItem('pachi-dmm-spec-cache-v3', JSON.stringify({
       [SOURCE_URL]: { spec: SPEC, at: Date.now() - 25 * 60 * 60 * 1000 },
     }));
     const fetcher = vi.fn(async () => Response.json({ html, sourceUrl: SOURCE_URL }));
@@ -93,7 +94,7 @@ describe('iPhoneの公開サイトから専用APIで取得', () => {
   });
 
   it('破損したキャッシュから回復する', async () => {
-    localStorage.setItem('pachi-dmm-spec-cache-v2', 'null');
+    localStorage.setItem('pachi-dmm-spec-cache-v3', 'null');
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ html, sourceUrl: SOURCE_URL })));
     expect(await fetchDmmMachine(SOURCE_URL)).toEqual(SPEC);
   });
@@ -123,6 +124,14 @@ describe('iPhoneの公開サイトから専用APIで取得', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     await expect(fetchDmmMachine(SOURCE_URL)).rejects.toThrow('サーバーに接続できません');
   });
+
+  it('保存版の日付を返し、端末内キャッシュでも保持する', async () => {
+    const fetcher = vi.fn(async () => Response.json({ html, sourceUrl: SOURCE_URL, archiveTimestamp: '20261008025917' }));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await fetchDmmMachine(SOURCE_URL)).toEqual({ ...SPEC, archiveTimestamp: '20261008025917' });
+    expect(await fetchDmmMachine(SOURCE_URL)).toEqual({ ...SPEC, archiveTimestamp: '20261008025917' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('取得APIの制限', () => {
@@ -137,6 +146,17 @@ describe('取得APIの制限', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(APP_ORIGIN);
     expect(response.headers.get('Content-Type')).toContain('application/json');
     expect((await response.json()).html).toBe(html);
+  });
+
+  it('DMMへCookieや認証情報を転送しない', async () => {
+    const upstream = vi.fn(async () => new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+    const response = await handleDmmRequest(request('/machines/5094', {
+      headers: { Origin: APP_ORIGIN, 'User-Agent': 'Safari Test Client', 'Accept-Language': 'ja-JP', Cookie: 'private=value', Authorization: 'Bearer private' },
+    }), {}, upstream);
+    expect(response.status).toBe(200);
+    expect(upstream.mock.calls[0][1].headers).toEqual({
+      Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'pachi-calc/1.0', 'Accept-Language': 'ja-JP,ja;q=0.9',
+    });
   });
 
   it.each([undefined, 'https://evil.example'])('別サイトやオリジンのない要求からは取得しない: %s', async (origin) => {
@@ -196,6 +216,47 @@ describe('取得APIの制限', () => {
     expect(upstream).toHaveBeenCalledTimes(2);
   });
 
+  it('DMMが403を返し続けても、同じ機種の保存版へ切り替える', async () => {
+    vi.useFakeTimers();
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(new Response('Forbidden', { status: 403 }))
+      .mockResolvedValueOnce(new Response('Forbidden', { status: 403 }))
+      .mockResolvedValueOnce(Response.json([
+        ['urlkey', 'timestamp', 'original', 'mimetype', 'statuscode'],
+        ['com,dmm,p-town)/machines/5094', '20261008025917', SOURCE_URL, 'text/html', '200'],
+      ]))
+      .mockResolvedValueOnce(new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+    const pending = handleDmmRequest(request(), {}, upstream);
+    await vi.advanceTimersByTimeAsync(1000);
+    const response = await pending;
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.archiveTimestamp).toBe('20261008025917');
+    expect(parseSpec(payload.html, payload.sourceUrl)).toEqual(SPEC);
+    const indexUrl = new URL(upstream.mock.calls[2][0]);
+    expect(indexUrl.origin).toBe('https://web.archive.org');
+    expect(indexUrl.searchParams.get('url')).toBe(SOURCE_URL);
+    expect(upstream.mock.calls[3][0]).toBe(`https://web.archive.org/web/20261008025917id_/${SOURCE_URL}`);
+    expect(upstream.mock.calls[3][1].redirect).toBe('manual');
+  });
+
+  it.each([
+    [['urlkey', 'timestamp', 'original']],
+    [['urlkey', 'timestamp', 'original'], ['key', '20261008025917', 'https://evil.example/private']],
+  ])('保存版がない場合や機種URLが異なる場合は成功扱いにしない', async (rows) => {
+    vi.useFakeTimers();
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(new Response('Forbidden', { status: 403 }))
+      .mockResolvedValueOnce(new Response('Forbidden', { status: 403 }))
+      .mockResolvedValueOnce(Response.json(rows));
+    const pending = handleDmmRequest(request(), {}, upstream);
+    await vi.advanceTimersByTimeAsync(1000);
+    const response = await pending;
+    expect(response.status).toBe(502);
+    expect((await response.json()).error).toContain('HTTP 403');
+    expect(upstream).toHaveBeenCalledTimes(3);
+  });
+
   it('成功したページをAPI側に保存し、次の端末の取得ではDMMへ接続しない', async () => {
     let stored;
     const cache = {
@@ -231,7 +292,7 @@ describe('取得APIの制限', () => {
       signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     }));
     const pending = handleDmmRequest(request(), {}, upstream);
-    await vi.advanceTimersByTimeAsync(15000);
+    await vi.advanceTimersByTimeAsync(25000);
     const response = await pending;
     expect(response.status).toBe(504);
     expect((await response.json()).error).toContain('タイムアウト');
