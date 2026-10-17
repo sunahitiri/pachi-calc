@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { dmmProxyPlugin } from './server/dmm-vite-plugin.js'
 
 // 本番ビルド時に dist/sw.js 内の __BUILD_ID__ を現在のタイムスタンプに置換。
 // これにより毎回 sw.js の中身が変わり、ブラウザが新しい SW を検出 → クライアント
@@ -26,6 +27,6 @@ function injectSwBuildId() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), injectSwBuildId()],
+  plugins: [react(), tailwindcss(), injectSwBuildId(), dmmProxyPlugin()],
   base: './',
 })

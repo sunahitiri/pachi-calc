@@ -1,69 +1,4 @@
-// DMM P-townから機種スペックを自動取得
-//
-// 注意: p-town.dmm.com は CloudFront でデータセンターIPをブロックしているため、
-// 一般的な公開CORSプロキシ経由の直接取得はほぼ 403 で失敗する。
-// そのため以下の経路を全部同時に試し、最初にスペック抽出まで成功したものを採用する:
-//   1. r.jina.ai      -- 実ブラウザでレンダリングして本文テキストを返すリーダー (CORS対応)
-//   2. プロキシ→Wayback Machine のスナップショット (archive.org はプロキシを弾かない)
-//   3. プロキシ→DMM 直接 (通ればラッキー程度の保険)
-
-// CORSプロキシのラッパー (対象URLをプロキシ経由のURLへ変換)
-const PROXY_WRAPPERS = [
-  {
-    name: 'allorigins',
-    wrap: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  },
-  {
-    name: 'codetabs',
-    wrap: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
-  },
-];
-
-const fetchText = async (fetchUrl, signal) => {
-  const res = await fetch(fetchUrl, {
-    signal,
-    headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
-};
-
-// Wayback Machine のスナップショットをプロキシ経由で取得する。
-// `web/2id_/` 形式のリダイレクトURLはプロキシが追ってくれない (空レスポンスになる) ため、
-// まず CDX API で最新スナップショットを解決してから本体を取得する2段方式。
-// ※ available API はスナップショットが存在しても {} を返すことがあり信頼できない (CDX は正確)
-async function fetchViaWayback(wrap, url, signal) {
-  const cdxUrl =
-    'https://web.archive.org/cdx/search/cdx?output=json&filter=statuscode:200&limit=-1&url=' +
-    encodeURIComponent(url.replace(/^https?:\/\//, ''));
-  const cdxJson = await fetchText(wrap(cdxUrl), signal);
-  // 行形式: [urlkey, timestamp, original, mimetype, statuscode, digest, length]
-  const rows = JSON.parse(cdxJson);
-  const last = Array.isArray(rows) && rows.length >= 2 ? rows[rows.length - 1] : null;
-  const timestamp = last?.[1];
-  const original = last?.[2];
-  if (!timestamp || !original) throw new Error('Waybackにスナップショットがありません');
-  // id_ フラグで Wayback のツールバー無しの原本HTMLを取得
-  return fetchText(wrap(`https://web.archive.org/web/${timestamp}id_/${original}`), signal);
-}
-
-// 取得経路定義: { name, run(url, signal) -> Promise<htmlString> }
-const SOURCES = [
-  {
-    name: 'jina-reader',
-    run: (url, signal) => fetchText(`https://r.jina.ai/${url}`, signal),
-  },
-  ...PROXY_WRAPPERS.map((p) => ({
-    name: `${p.name}→wayback`,
-    run: (url, signal) => fetchViaWayback(p.wrap, url, signal),
-  })),
-  ...PROXY_WRAPPERS.map((p) => ({
-    name: `${p.name}→dmm`,
-    run: (url, signal) => fetchText(p.wrap(url), signal),
-  })),
-];
-
-const URL_PATTERN = /^https?:\/\/p-town\.dmm\.com\/machines\/\d+/;
+import { normalizeDmmUrl } from './dmmUrl.js';
 
 // HTMLをパースして機種スペックを抽出
 export function parseSpec(html, sourceUrl = '') {
@@ -119,18 +54,15 @@ export function parseSpec(html, sourceUrl = '') {
   };
 }
 
-// 1経路あたりの待ち時間上限。ハングする経路を切り捨てる
-const FETCH_TIMEOUT_MS = 20000;
-// 再試行までの待ち時間 (レート制限に当たった場合に少し置いてから再試行)
-const RETRY_DELAY_MS = 1500;
-
-// 一度取得に成功したスペックの localStorage キャッシュ。
-// 機種スペックは変わらないため、同じURLの再取得はネットワーク不要で即時成功させる。
-const CACHE_KEY = 'pachi-dmm-spec-cache';
+// 同じ機種の連続取得は避け、翌日以降はDMMの最新内容を取得する。
+const CACHE_KEY = 'pachi-dmm-spec-cache-v2';
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 18000;
 
 function readSpecCache() {
   try {
-    return JSON.parse(localStorage.getItem(CACHE_KEY)) || {};
+    const cache = JSON.parse(localStorage.getItem(CACHE_KEY));
+    return cache && typeof cache === 'object' && !Array.isArray(cache) ? cache : {};
   } catch {
     return {};
   }
@@ -142,87 +74,87 @@ function writeSpecCache(url, spec) {
     cache[url] = { spec, at: Date.now() };
     localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
   } catch {
-    // 容量超過等は無視 (キャッシュは必須ではない)
+    // 保存できなくても取得した結果は利用できる。
   }
 }
 
-export async function fetchDmmMachine(url) {
-  if (!url || typeof url !== 'string') {
-    throw new Error('URLを入力してください');
-  }
-  const trimmed = url.trim();
-  if (!URL_PATTERN.test(trimmed)) {
-    throw new Error(
-      'DMM P-townの機種ページURL（https://p-town.dmm.com/machines/数字）を入力してください'
-    );
-  }
-
-  // 過去に成功したURLはキャッシュから即返す (スペックは不変)
-  const cached = readSpecCache()[trimmed];
-  if (cached?.spec) return cached.spec;
-
-  // 全経路へ同時にリクエストし、最初にスペック抽出まで成功したものを採用する。
-  // (逐次だと死んでいる経路1つで数十秒待たされるため)
-  const controllers = SOURCES.map(() => new AbortController());
-  const failures = [];
-
-  const attempts = SOURCES.map(async (source, i) => {
-    const controller = controllers[i];
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+function getProxyBase() {
+  const configured = import.meta.env.VITE_DMM_PROXY_URL?.trim();
+  if (configured) {
+    let url;
     try {
-      let lastErr = null;
-      // 無料プロキシは単発で失敗することが多いので、経路ごとに1回だけ再試行する
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (attempt > 0) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-          if (controller.signal.aborted) break;
-        }
-        try {
-          const html = await source.run(trimmed, controller.signal);
-          if (!html || html.length < 1000) {
-            throw new Error(`レスポンスが空または短すぎ (${html?.length ?? 0}文字)`);
-          }
-          // エラーページ等を成功扱いしないよう、スペック抽出の成功までをこの経路の成功条件にする
-          return parseSpec(html, trimmed);
-        } catch (e) {
-          lastErr = e;
-          if (e?.name === 'AbortError') break;
-          // 本文は取得できたのにスペックが無い場合は再試行しても無意味 (パチスロ機ページ等)
-          if (String(e?.message || '').startsWith('スペック情報')) break;
-        }
-      }
-      throw lastErr || new Error('中断されました');
-    } catch (e) {
-      const msg =
-        e?.name === 'AbortError' ? `タイムアウト (${FETCH_TIMEOUT_MS / 1000}秒)` : e?.message || String(e);
-      failures.push(`${source.name}: ${msg}`);
-      throw e;
-    } finally {
-      clearTimeout(timer);
+      url = new URL(configured);
+    } catch {
+      throw new Error('自動取得サーバーのURLが正しく設定されていません。');
     }
-  });
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+        url.username || url.password || url.search || url.hash) {
+      throw new Error('自動取得サーバーにはHTTPSのURLを設定してください。');
+    }
+    return configured.replace(/\/+$/, '');
+  }
 
+  if (import.meta.env.DEV || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    return '/api/dmm';
+  }
+  throw new Error('自動取得サーバーがまだ設定されていません。設定が完了するまでは「手動貼り付け」を利用してください。');
+}
+
+export async function fetchDmmMachine(value) {
+  const sourceUrl = normalizeDmmUrl(value);
+  const cached = readSpecCache()[sourceUrl];
+  if (cached?.at > Date.now() - CACHE_TTL_MS &&
+      Number.isFinite(cached.spec?.probability) && cached.spec.probability > 0 &&
+      Number.isFinite(cached.spec?.averagePayout) && cached.spec.averagePayout > 0 &&
+      cached.spec.sourceUrl === sourceUrl) {
+    return cached.spec;
+  }
+
+  const machineId = new URL(sourceUrl).pathname.split('/').pop();
+  const endpoint = `${getProxyBase()}/machines/${machineId}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const spec = await Promise.any(attempts);
-    // 勝者が決まったら残りのリクエストは打ち切る
-    controllers.forEach((c) => c.abort());
-    writeSpecCache(trimmed, spec);
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        signal: controller.signal,
+        credentials: 'omit',
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      });
+    } catch {
+      throw new Error(controller.signal.aborted
+        ? '取得がタイムアウトしました。時間をおいて再試行してください。'
+        : '自動取得サーバーに接続できません。通信環境を確認するか、「手動貼り付け」を利用してください。');
+    }
+
+    if (!response.headers.get('Content-Type')?.includes('application/json')) {
+      throw new Error('自動取得サーバーから正しい応答がありません。公開設定を確認してください。');
+    }
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `取得に失敗しました（HTTP ${response.status}）。`);
+    }
+    if (typeof payload.html !== 'string' || payload.sourceUrl !== sourceUrl) {
+      throw new Error('取得した機種ページが正しくありません。もう一度取得してください。');
+    }
+    const spec = parseSpec(payload.html, sourceUrl);
+    writeSpecCache(sourceUrl, spec);
     return spec;
-  } catch {
-    const err = new Error(
-      `全ての取得経路で失敗しました。\n${failures.join('\n')}\n\n💡 時間をおくか回線を切り替えて(Wi-Fi⇔モバイル)再試行してください。急ぐ場合はDMMページをブラウザで開いて「ページのソースを表示」→ 全選択コピー → 手動貼り付けで取り込めます。`
-    );
-    err.failures = failures;
-    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-// 手動貼り付け用: HTMLとURL(任意)からスペック抽出
+// 手動貼り付けは通信せず、端末内だけで解析する。
 export function parseDmmHtml(html, sourceUrl = '') {
-  if (!html || typeof html !== 'string' || html.length < 500) {
-    throw new Error('HTMLが短すぎます。ページ全体のソースを貼り付けてください。');
+  if (!html || typeof html !== 'string' || !html.trim()) {
+    throw new Error('ページの文章かHTMLソースを貼り付けてください。');
   }
-  const spec = parseSpec(html, sourceUrl);
-  if (sourceUrl) writeSpecCache(sourceUrl.trim(), spec);
+  const canonicalUrl = sourceUrl.trim() ? normalizeDmmUrl(sourceUrl) : '';
+  const spec = parseSpec(html, canonicalUrl);
+  if (canonicalUrl) writeSpecCache(canonicalUrl, spec);
   return spec;
 }

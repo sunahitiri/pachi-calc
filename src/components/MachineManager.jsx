@@ -409,7 +409,7 @@ export default function MachineManager({ machines, setMachines }) {
               </div>
               <button
                 onClick={handleDmmPaste}
-                disabled={!dmmHtml || dmmHtml.length < 500}
+                disabled={!dmmHtml.trim()}
                 className="w-full bg-indigo-600 text-white py-1.5 rounded text-sm font-medium disabled:opacity-50"
               >
                 解析して編集
